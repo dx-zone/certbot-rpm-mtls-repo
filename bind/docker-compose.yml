@@ -1,0 +1,52 @@
+services:
+  # ---------------------------------------------------------------------------
+  # PRIMARY DNS SERVER (Master Role)
+  # ---------------------------------------------------------------------------
+  dns-primary:
+    build: .
+    container_name: dns-primary
+    restart: always
+    environment:
+      - DNS_ROLE=primary
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+    volumes:
+      - ./files:/etc/named:Z          # Maps your modular config tree
+      - primary-data:/var/named       # Persists zone databases & journals
+      - dns-logs:/var/log/named       # Shared logging volume
+    networks:
+      dns-cluster:
+        ipv4_address: 10.10.10.10     # Static IP for reliability in masters.conf
+
+  # ---------------------------------------------------------------------------
+  # SECONDARY DNS SERVER (Slave Role)
+  # ---------------------------------------------------------------------------
+  dns-secondary:
+    build: .
+    container_name: dns-secondary
+    restart: always
+    environment:
+      - DNS_ROLE=secondary
+    ports:
+      - "54:53/udp"                   # Exposed on port 54 to avoid host conflict
+      - "54:53/tcp"
+    volumes:
+      - ./files:/etc/named:Z          # Same config tree, switched by entrypoint
+      - secondary-data:/var/named     # Persists slave data (/var/named/slaves)
+      - dns-logs:/var/log/named
+    networks:
+      dns-cluster:
+        ipv4_address: 10.10.10.11     # Static IP for reliability
+
+networks:
+  dns-cluster:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.10.0/24       # Dedicated subnet for the DNS cluster
+
+volumes:
+  primary-data:
+  secondary-data:
+  dns-logs:

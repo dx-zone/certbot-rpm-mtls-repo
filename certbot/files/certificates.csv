@@ -1,0 +1,5 @@
+fqdn,dns_provider,email
+repo.mydatacenter.io,cloudflare,admin@mydatacenter.io
+app.mydatacenter.io,cloudflare,admin@mydatacenter.io
+web.mydatacenter.io,cloudflare,admin@mydatacenter.io
+email.mydatacenter.io,cloudflare,admin@mydatacenter.io

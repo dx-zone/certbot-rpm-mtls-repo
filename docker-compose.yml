@@ -1,0 +1,107 @@
+###########################################################################################
+# AUTOMATED CERTBOT DNS-01 MANAGER & RPM REPOSITORY
+#
+# PERSISTENCE LOCATIONS ON HOST:
+# - Certificates: ./datastore/certbot-data/letsencrypt
+# - RPM Packages: ./datastore/rpmrepo-data/rpms
+# - DNS Secrets:  ./secrets/certbot-secrets/ini
+###########################################################################################
+
+services:
+  # --- SERVICE 1: CERTBOT MANAGER ---
+  # Handles DNS-01 challenges.
+  certbot:
+    # SPECIFY DOCKERFILE LOCATION: docker compose will build from.
+    build:
+      context: ./certbot
+      dockerfile: Dockerfile
+    container_name: certbot
+    environment:
+      # INJECTION: Load variables from .env required for rpmrepo-entrypoint.sh to generate repo.conf and fallback links.
+      - REPO_FQDN=${REPO_FQDN}  # Define FQDN of for the rpmrepo certificate
+    volumes:
+      # PERSISTENCE: Main Let's Encrypt storage.
+      # :rw,Z allows writing and handles SELinux relabeling.
+      - ./datastore/certbot-data/letsencrypt:/etc/letsencrypt:rw,Z
+
+      # SECRETS: Mounts DNS API tokens (Cloudflare/RFC2136).
+      - ./secrets/certbot-secrets/ini:/etc/letsencrypt/secrets:ro,Z
+
+      # SHARED STORAGE: Access to the RPM directory where certbot will pack into RPM post-issuance certificates.
+      - ./datastore/rpmrepo-data/rpms:/rpms:rw,Z
+
+      # OVERRIDE: Overrides the baked-in CSV with your local domain list
+      - ./certbot/files/certificates.csv:/etc/letsencrypt/certificates.csv:rw,Z
+
+    # The Python manager runs as PID 1 to maintain the service lifecycle.
+    # restart policy ensures the service recovers from crashes or host reboots.
+    restart: unless-stopped
+
+
+  # --- SERVICE 2: RPM REPOSITORY ---
+  # Apache server serving RPMs. Uses fallback certs until Certbot finishes.
+  rpmrepo:
+    hostname: ${REPO_FQDN}
+    build:
+      context: ./rpmrepo
+      dockerfile: Dockerfile
+    depends_on:
+      certbot:
+        condition: service_started
+    container_name: rpmrepo
+    environment:
+      # INJECTION: Load variables from .env required for rpmrepo-entrypoint.sh to generate repo.conf and fallback links.
+      # Entrypoint and bootstrap scripts require these variables to generate repo.conf, PKI material and mTLS certificates.
+      - REPO_FQDN=${REPO_FQDN}
+      - CA_NAME=${CA_NAME}
+      - CLIENT_NAME=${CLIENT_NAME}
+    ports:
+      - "443:443"
+    volumes:
+      # 1. RPM SHARED STORAGE: Read-only access as the container only needs to read RPM packages stored in here from certbot.
+      - ./datastore/rpmrepo-data/rpms:/var/www/html/repo/rpms:ro,Z
+
+      # 2. DOMAIN-SPECIFIC CERTS (Server Identity & TLS):
+      # SHARED STORAGE: Mounted as :ro to allow rpmrepo to read his PKI material (cert/key) from certbot.
+      # Depends on certbot to generate the TLS certificate if FQDN specified in both .env and certificates.csv
+      #  or will use fallback self-sing certificate.
+      - ./datastore/certbot-data/letsencrypt/live/${REPO_FQDN}:/etc/letsencrypt/live/${REPO_FQDN}:ro,Z
+      - ./datastore/certbot-data/letsencrypt/archive/${REPO_FQDN}:/etc/letsencrypt/archive/${REPO_FQDN}:ro,Z
+
+      # 3. mTLS CLIENT CA: Linux clients must trust this CA to authenticate to the RPM repository.
+      - ./secrets/rpmrepo-secrets/pki_mtls_material:/etc/httpd/certs:rw,Z
+
+    networks:
+      default:
+        aliases:
+          - ${REPO_FQDN} # <--- IMPORTANT: This resolves the FQDN to this container based on .env variables.
+
+    restart: unless-stopped
+
+
+  # --- SERVICE 3: LINUX CLIENT TESTER ---
+  client-test:
+    build: ./client
+    container_name: client-test
+    environment:
+      # INJECTION: Load variables from .env required for rpmrepo-entrypoint.sh to generate repo.conf and fallback links.
+      # Entrypoint and bootstrap scripts require these variables to generate repo.conf, PKI material and mTLS certificates.
+      - REPO_FQDN=${REPO_FQDN}
+      - CA_NAME=${CA_NAME}
+      - CLIENT_NAME=${CLIENT_NAME}
+    volumes:
+      # PERSISTENCE: Mounts the mTLS CLIENT CA certificate and key.
+      - ./secrets/rpmrepo-secrets/pki_mtls_material/${CLIENT_NAME}.crt:/etc/pki/tls/certs/${CLIENT_NAME}.crt:ro,Z
+      - ./secrets/rpmrepo-secrets/pki_mtls_material/${CLIENT_NAME}.key:/etc/pki/tls/private/${CLIENT_NAME}.key:ro,Z
+      - ./secrets/rpmrepo-secrets/pki_mtls_material/client-ca.crt:/etc/pki/ca-trust/source/anchors/client-ca.crt:ro,Z
+      - ./client/files/client-entrypoint.sh:/client-entrypoint.sh:rw,Z
+    # update-ca-trust is required because the CA is mounted at runtime
+    # The script /client-entrypoint.sh handles repository configuration and keeping the container alive.
+    entrypoint: /usr/bin/bash -c "update-ca-trust && exec /client-entrypoint.sh"
+    restart: unless-stopped
+
+networks:
+  default:
+    name: pki_network  # Ensures a predictable network name for internal DNS
+
+# END OF FILE

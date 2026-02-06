@@ -1,0 +1,16 @@
+# Repository definition to retrieve SSL certificates
+[${CA_NAME}-certificate-repository]
+name=${CA_NAME} Secure AlmaLinux Certificate Repository
+baseurl=https://${REPO_FQDN}/rpms/
+enabled=1
+gpgcheck=0
+
+# Mutual TLS (mTLS) Authentication
+sslclientcert=/etc/pki/tls/certs/${CLIENT_NAME}.crt
+sslclientkey=/etc/pki/tls/private/${CLIENT_NAME}.key
+
+# Server Verification
+sslverify=1
+
+# Optimization
+metadata_expire=1

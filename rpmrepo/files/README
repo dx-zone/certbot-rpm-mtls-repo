@@ -1,0 +1,42 @@
+###########################################################################################
+# 📦 AUTOMATED RPM REPOSITORY & WEB SERVER (ALMALINUX 9)
+# 
+# WHAT IS THIS?
+# This container acts as a "Digital Warehouse" (RPM Repository). It hosts the 
+# certificate packages created by your Certbot container and serves them over 
+# a secure HTTPS connection using the Apache Web Server.
+#
+# 📋 HOW IT WORKS:
+# 1. THE WATCHMAN: Uses 'inotify' to monitor the /rpms folder. When a new RPM 
+#    is added, it automatically runs 'createrepo_c' to update the index so 
+#    clients can see the new package immediately.
+#
+# 2. THE SAFETY NET: Apache requires SSL to start. This container creates a 
+#    "Fallback" certificate at build-time so the server starts even if your 
+#    real Let's Encrypt certs haven't been issued yet.
+#
+# 3. AUTOMATIC SSL SETUP: On startup, the container injects your domain (FQDN) 
+#    into the Apache config and links the best available certificates.
+#
+# 🔧 CONFIGURATION (.env file):
+# This container relies on your project's root '.env' file:
+# - REPO_FQDN: Must match your domain (e.g., repo.mydatacenter.io). 
+# - CA_NAME: The friendly name seen in the client's 'trust list'.
+#
+# ⚠️ IMPORTANT: If you change REPO_FQDN, you must update BOTH the .env file 
+#    and certificates.csv, then restart the containers.
+#
+# 🚀 HOW TO USE THIS:
+# - MOUNT /rpms: Link this to your Certbot container's output folder.
+# - CREDENTIALS: Place your DNS .ini files in /etc/letsencrypt/secrets/ 
+#   and ensure they are 'chmod 600'.
+#
+# 🛠️ CLIENT-SIDE USAGE:
+# Once the client has your '.repo' file installed, they can run:
+# 'sudo dnf install repo-mydatacenter-io-pki-repo'
+# This will install the certs to /etc/pki/tls/ and update the system trust.
+#
+# ⚠️ SECURITY NOTE:
+# Runs as ROOT to manage Apache services, monitor filesystem events, 
+# and handle system-level certificate permissions.
+###########################################################################################

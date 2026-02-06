@@ -1,0 +1,15 @@
+$TTL 86400
+@   IN  SOA     ns1.example.net. admin.example.net. (
+        2024052101 ; serial
+        3600       ; refresh
+        1800       ; retry
+        604800     ; expire
+        86400      ; minimum
+)
+@       IN  NS      ns1.example.net.
+@       IN  NS      ns2.example.net.
+
+ns1     IN  A       10.0.0.10  ; IP of this Primary
+ns2     IN  A       10.0.0.11  ; IP of your Secondary
+www     IN  A       1.2.3.4
+
