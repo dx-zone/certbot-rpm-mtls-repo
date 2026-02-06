@@ -1,0 +1,101 @@
+###############################################################################
+# 🔐 SECURITY FIRST — NEVER COMMIT SECRETS OR PKI
+###############################################################################
+
+# DNS provider credentials (Cloudflare, RFC2136, TSIG, tokens)
+secrets/**/ini/*.ini
+
+# Internal PKI material (CA keys, client certs, private keys)
+secrets/**/pki_material/
+secrets/**/pki_material/**
+secrets/**/pki_mtls_material/
+secrets/**/pki_mtls_material/**
+
+# Client-auth CA mounted into rpmrepo (generated, not source)
+secrets/**/client-ca.crt
+
+# Any private keys anywhere (defense-in-depth)
+**/*.key
+**/*.pem
+**/*.crt
+**/*.csr
+**/*.srl
+
+###############################################################################
+# 💾 RUNTIME STATE — DO NOT VERSION
+###############################################################################
+
+# Certbot runtime state (Let’s Encrypt accounts, certs, keys)
+datastore/certbot-data/
+datastore/certbot-data/**
+
+# RPM artifacts & repository metadata
+datastore/rpmrepo-data/
+datastore/rpmrepo-data/**
+
+# RPM build leftovers (just in case)
+**/rpmbuild/
+**/rpmbuild/**
+
+###############################################################################
+# 🐳 DOCKER & CONTAINER RUNTIME NOISE
+###############################################################################
+
+# Docker-generated or runtime-only files
+*.pid
+*.log
+*.tmp
+
+# Override or local compose files (optional)
+docker-compose.override.yml
+
+###############################################################################
+# 🧠 IDEs & EDITORS (ENTERPRISE STANDARD)
+###############################################################################
+
+# JetBrains (IntelliJ, PyCharm, CLion, etc.)
+.idea/
+*.iml
+
+# VS Code
+.vscode/
+.history/
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+.#*
+\#*\#
+
+###############################################################################
+# 🐍 PYTHON (SCRIPT TOOLING)
+###############################################################################
+
+__pycache__/
+*.py[cod]
+*.pyo
+.env.local
+.venv/
+venv/
+
+###############################################################################
+# 📦 OS / FILESYSTEM NOISE
+###############################################################################
+
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+###############################################################################
+# 📝 OPTIONAL: LOCAL EXPERIMENTS / SCRATCH
+###############################################################################
+
+# Uncomment if you create local scratch dirs
+# .data/
+# scratch/
+# tmp/
+
