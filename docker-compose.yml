@@ -71,6 +71,16 @@ services:
       # 3. mTLS CLIENT CA: Linux clients must trust this CA to authenticate to the RPM repository.
       - ./secrets/rpmrepo-secrets/pki_mtls_material:/etc/httpd/certs:rw,Z
 
+    # Healthcheck for the RPMREPO service: Ensures PKI files are generated
+    # BEFORE dependent services (like client-test) attempt to mount them.
+    # This prevents Docker from mistakenly creating directories for missing files.
+    healthcheck:
+      test: [ "CMD-SHELL", "[ -f /etc/httpd/certs/client-ca.crt ] && [ -f /etc/httpd/certs/${CLIENT_NAME}.crt ] || exit 1" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s # Give it time to run the entrypoint script to generate client's pki material
+
     networks:
       default:
         aliases:
@@ -86,7 +96,7 @@ services:
       dockerfile: Dockerfile
     depends_on:
       rpmrepo:
-        condition: service_started
+        condition: service_healthy
     container_name: client-test
     environment:
       # INJECTION: Load variables from .env required for rpmrepo-entrypoint.sh to generate repo.conf and fallback links.
@@ -100,9 +110,28 @@ services:
       - ./secrets/rpmrepo-secrets/pki_mtls_material/${CLIENT_NAME}.key:/etc/pki/tls/private/${CLIENT_NAME}.key:ro,Z
       - ./secrets/rpmrepo-secrets/pki_mtls_material/client-ca.crt:/etc/pki/ca-trust/source/anchors/client-ca.crt:ro,Z
       - ./client/files/client-entrypoint.sh:/client-entrypoint.sh:rw,Z
-    # update-ca-trust is required because the CA is mounted at runtime
-    # The script /client-entrypoint.sh handles repository configuration and keeping the container alive.
-    entrypoint: /usr/bin/bash -c "update-ca-trust && exec /client-entrypoint.sh"
+
+    # 1. Register the CA in the OS trust store since it's provided at runtime via volume.
+    # 2. Wait for PKI files to exist.
+    # 3. Hand off to the client-entrypoint script.
+    # NOTE: 'depends_on: condition: service_healthy'
+    #    in docker-compose ensures these files exist on the host BEFORE
+    #    this container is created, preventing 'mount-as-directory' errors.
+    #    If Docker mounted these pki file mounts as directories
+    #    because they didn't exist at start, this container MUST be rebuilt.
+    # Example:
+    #    docker compose rm -sf rpmrepo client-test
+    #    docker compose -d --build rpmrepo
+    #    docker compose -d --build client-test
+
+    entrypoint: >
+      /usr/bin/bash -c "
+      echo 'Waiting for PKI materials...';
+      until [ -f /etc/pki/ca-trust/source/anchors/client-ca.crt ] && [ ! -d /etc/pki/ca-trust/source/anchors/client-ca.crt ]; do
+        echo 'Files not ready or wrongly mounted as directory. Sleeping...';
+        sleep 2;
+      done;
+      update-ca-trust && exec /client-entrypoint.sh"
     restart: unless-stopped
 
 networks:
