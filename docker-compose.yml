@@ -81,7 +81,12 @@ services:
 
   # --- SERVICE 3: LINUX CLIENT TESTER ---
   client-test:
-    build: ./client
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    depends_on:
+      rpmrepo:
+        condition: service_started
     container_name: client-test
     environment:
       # INJECTION: Load variables from .env required for rpmrepo-entrypoint.sh to generate repo.conf and fallback links.
