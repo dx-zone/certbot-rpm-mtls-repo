@@ -20,7 +20,7 @@
 #
 # 🔧 CONFIGURATION (.env file):
 # This container relies on your project's root '.env' file:
-# - REPO_FQDN: Must match your domain (e.g., repo.mydatacenter.io). 
+# - REPO_FQDN: Must match your domain (e.g., repo.example.com). 
 # - CA_NAME: The friendly name seen in the client's 'trust list'.
 #
 # ⚠️ IMPORTANT: If you change REPO_FQDN, you must update BOTH the .env file 
@@ -33,7 +33,7 @@
 #
 # 🛠️ CLIENT-SIDE USAGE:
 # Once the client has your '.repo' file installed, they can run:
-# 'sudo dnf install repo-mydatacenter-io-pki-repo'
+# 'sudo dnf install repo-example-com-pki-repo'
 # This will install the certs to /etc/pki/tls/ and update the system trust.
 #
 # ⚠️ SECURITY NOTE:

@@ -46,7 +46,7 @@ FROM almalinux:9
 
 # 2. METADATA
 LABEL org.opencontainers.image.title="Modular BIND DNS"
-LABEL org.opencontainers.image.maintainer="DevOps <devops@mydatacenter.io>"
+LABEL org.opencontainers.image.maintainer="DevOps <devops@example.com>"
 
 # 3. INSTALLATION: BIND service and troubleshooting utilities
 RUN dnf -y update && \
@@ -105,7 +105,7 @@ FROM almalinux:9
 
 # 2. METADATA
 LABEL org.opencontainers.image.title="Modular BIND DNS"
-LABEL org.opencontainers.image.maintainer="DevOps <devops@mydatacenter.io>"
+LABEL org.opencontainers.image.maintainer="DevOps <devops@example.com>"
 
 # 3. INSTALLATION: BIND service and troubleshooting utilities
 RUN dnf -y update && \

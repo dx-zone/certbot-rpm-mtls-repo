@@ -177,7 +177,7 @@ log_step "8" "Secure Package Retrieval"
 if [ "$RPM_COUNT" -gt 0 ]; then
     # Try to find an RPM to test download
     SAMPLE_RPM_FILE=$(docker exec rpmrepo ls /var/www/html/repo/rpms/ | grep "\.rpm$" | head -n 1)
-    # Extract package name (e.g., app-mydatacenter-io-pki-repo)
+    # Extract package name (e.g., app-example-com-pki-repo)
     SAMPLE_PKG=$(echo "$SAMPLE_RPM_FILE" | sed 's/-1.0-.*\.rpm//')
     
     if docker exec client-test dnf download --destdir=/tmp "$SAMPLE_PKG" > /dev/null 2>&1; then

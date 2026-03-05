@@ -48,7 +48,7 @@ The system is orchestrated via `docker-compose` and consists of three specialize
 ### 2. Configuration
 Create a `.env` file in the root directory:
 ```bash
-REPO_FQDN=repo.mydatacenter.io
+REPO_FQDN=repo.example.com
 CA_NAME=My-Internal-CA
 CLIENT_NAME=workstation-01
 ```
@@ -56,8 +56,8 @@ CLIENT_NAME=workstation-01
 Configure your certificates in `certbot/files/certificates.csv`:
 ```csv
 fqdn,dns_provider,email
-repo.mydatacenter.io,cloudflare,admin@mydatacenter.io
-app.mydatacenter.io,rfc2136,admin@mydatacenter.io
+repo.example.com,cloudflare,admin@example.com
+app.example.com,rfc2136,admin@example.com
 ```
 
 ### 3. Deployment

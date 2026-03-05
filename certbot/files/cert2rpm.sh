@@ -19,7 +19,7 @@ rpmdev-setuptree &>/dev/null
 # 2. Define the Packaging Engine
 cert2rpm() {
     local DOMAIN=$1
-    # Convert dots to dashes for valid RPM naming (e.g., app-mydatacenter-io)
+    # Convert dots to dashes for valid RPM naming (e.g., app-example-com)
     local DOMAIN_SPEC=$(echo "$DOMAIN" | tr '.' '-')
 
     echo "---------------------------------------------------"

@@ -22,7 +22,7 @@ set -euo pipefail
 # =========================
 # CONFIGURATION
 # =========================
-REPO_FQDN="${REPO_FQDN:-repo.mydatacenter.io}"
+REPO_FQDN="${REPO_FQDN:-repo.example.com}"
 
 # Client identity for mTLS (mounted into client-test)
 CLIENT_CERT="${CLIENT_CERT:-/etc/pki/tls/certs/client-identity.crt}"

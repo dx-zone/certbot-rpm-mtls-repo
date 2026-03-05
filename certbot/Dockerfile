@@ -49,7 +49,7 @@
 FROM almalinux:latest
 
 # 2. METADATA
-LABEL org.opencontainers.image.maintainer="DevOps <devops@mydatacenter.io>"
+LABEL org.opencontainers.image.maintainer="DevOps <devops@example.com>"
 
 # 3. INSTALLATION:
 RUN dnf install -y epel-release --setopt=install_weak_deps=False && \

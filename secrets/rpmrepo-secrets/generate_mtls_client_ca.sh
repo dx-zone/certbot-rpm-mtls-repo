@@ -20,7 +20,7 @@
 
 # --- 0. Locate and Load .env ---
 ENV_FILE="../../.env"
-DEFAULT_FQDN="repo.mydatacenter.io"
+DEFAULT_FQDN="repo.example.com"
 
 if [ -f "$ENV_FILE" ]; then
     echo "📂 [$(date +%T)] Loading environment variables from $ENV_FILE"
