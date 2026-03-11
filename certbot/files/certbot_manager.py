@@ -42,6 +42,7 @@ def run_certbot(fqdn, provider_key, email, hook_script):
     print(f"\n🔍 [PROVISIONING] Target: {fqdn}")
     print(f"   {'·' * 40}")  # Subtle internal separator
 
+    # Determine plugin and provider path and .ini file based (fall back to rfc2136 if not cloudflare)
     plugin = "cloudflare" if "cloudflare" in provider_key.lower() else "rfc2136"
     creds_path = SECRETS_DIR / f"{provider_key}.ini"
 

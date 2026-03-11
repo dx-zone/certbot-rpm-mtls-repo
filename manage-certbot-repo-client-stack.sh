@@ -49,14 +49,14 @@ load_env() {
 # --- 4. Usage Guide ---
 usage() {
     printf "${BOLD}🏗️  RPM Repository Stack Manager${NC}\n"
-    printf "Usage: $0 [-v] [TARGET]\n\n"
+    printf "Usage: $0 [-v] [TARGET] [SERVICE]\n\n"
     printf "Options:\n"
     printf "  -v       🔍 Verbose: Show every command being executed\n\n"
     printf "Available Targets:\n"
     printf "  init     🚀 Setup directories, fix permissions, and prepare PKI workspace\n"
     printf "  pki      🔐 Generate/Rotate mTLS client certificates (manual mode)\n"
     printf "  up       ⚡ Start the stack and wait for healthchecks\n"
-    printf "  rebuild  🛠️  Recreate containers (fixes config/env changes)\n"
+    printf "  rebuild  🛠️  Recreate containers (or one SERVICE)\n"
     printf "  status   📊 Show container health and certificate info\n"
     printf "  check    🔍 Run diagnostic checks (validation sub-commands)\n"
     printf "  logs     📜 Follow all container logs\n"
@@ -170,9 +170,24 @@ up_stack() {
 }
 
 rebuild_stack() {
-    log_info "Performing a clean rebuild of the stack..."
-    docker compose up -d --build --force-recreate --remove-orphans
-    log_success "Stack rebuilt and restarted."
+    local service_target="$1"
+
+    if [ -n "$service_target" ]; then
+        if ! docker compose config --services | grep -Fxq "$service_target"; then
+            log_error "Unknown service for rebuild: $service_target"
+            log_info "Available services:"
+            docker compose config --services
+            exit 1
+        fi
+
+        log_info "Rebuilding service: $service_target"
+        docker compose up -d --build --force-recreate "$service_target"
+        log_success "Service rebuilt and restarted: $service_target"
+    else
+        log_info "Performing a clean rebuild of the stack..."
+        docker compose up -d --build --force-recreate --remove-orphans
+        log_success "Stack rebuilt and restarted."
+    fi
 }
 
 status_stack() {
@@ -248,7 +263,7 @@ case "$TARGET" in
         up_stack
         ;;
     rebuild)
-        rebuild_stack
+        rebuild_stack "$2"
         ;;
     status)
         status_stack
