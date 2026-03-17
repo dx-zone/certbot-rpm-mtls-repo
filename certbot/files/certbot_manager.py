@@ -18,7 +18,6 @@ from pathlib import Path
 SECRETS_DIR = Path("/etc/letsencrypt/secrets")
 RETRY_DELAY = 60
 
-
 def log(message, is_error=False):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     icon = "❌ ERROR:" if is_error else "ℹ️ "
@@ -33,6 +32,8 @@ parser = argparse.ArgumentParser(
 parser.add_argument("--csv", required=True, help="Mandatory: Path to the CSV file.")
 parser.add_argument("--hook", help="Optional: Executable script to run after success.")
 parser.add_argument("--frequency", type=int, default=60, help="Frequency in minutes.")
+parser.add_argument("--propagation-delay", type=int, default=60, help="DNS propagation delay in seconds (default: 60).")
+parser.add_argument("--verbose", action="store_true", help="Enable verbose output.")
 
 args = parser.parse_args()
 
@@ -54,7 +55,9 @@ def run_certbot(fqdn, provider_key, email, hook_script):
         "certbot", "certonly", "--non-interactive", "--agree-tos",
         "--email", email, f"--dns-{plugin}",
         f"--dns-{plugin}-credentials", str(creds_path),
-        "--keep-until-expiring", "-d", fqdn
+        "--dns-rfc2136-propagation-seconds", str(args.propagation_delay),
+        "--keep-until-expiring", "-d", fqdn,
+        "--vvv" if args.verbose else ""
     ]
 
     if hook_script:
