@@ -34,7 +34,7 @@ parser.add_argument("--csv", required=True, help="Mandatory: Path to the CSV fil
 parser.add_argument("--hook", help="Optional: Executable script to run after success.")
 parser.add_argument("--frequency", type=int, default=60, help="Frequency in minutes.")
 parser.add_argument("--propagation-delay", type=int, default=60, help="DNS propagation delay in seconds (default: 60).")
-parser.add_argument("--verbose", action="store_true", help="Enable verbose output.")
+parser.add_argument("--verbose", action="store_true", help="Enable verbose output (adds -vvv to Certbot commands).")
 
 args = parser.parse_args()
 
