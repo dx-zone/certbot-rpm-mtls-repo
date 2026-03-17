@@ -18,6 +18,10 @@ from pathlib import Path
 # --- Configuration ---
 SECRETS_DIR = Path("/etc/letsencrypt/secrets")
 RETRY_DELAY = 60
+# Default DNS propagation delay in seconds
+DEFAULT_PROPAGATION_DELAY = 60
+# DNS propagation delay in seconds for slow legacy DNS propagations
+LEGACY_PROPAGATION_DELAY = 200
 
 def log(message, is_error=False):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -33,7 +37,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument("--csv", required=True, help="Mandatory: Path to the CSV file listing domains,dns_provider,email per line.")
 parser.add_argument("--hook", help="Optional: Executable script to run after success.")
 parser.add_argument("--frequency", type=int, default=60, help="Frequency in minutes.")
-parser.add_argument("--propagation-delay", type=int, default=60, help="DNS propagation delay in seconds (default: 60).")
+parser.add_argument("--propagation-delay", type=int, default=None, help="DNS propagation delay in seconds.")
 parser.add_argument("--verbose", action="store_true", help="Enable verbose output (adds -vvv to Certbot commands).")
 
 args = parser.parse_args()
@@ -52,11 +56,18 @@ def run_certbot(fqdn, provider_key, email, hook_script):
         log(f"Missing credentials for {fqdn} at {creds_path}", is_error=True)
         return
 
+    # Adjust propagation delay for legacy credentials
+    current_delay = args.propagation_delay
+    if "legacy" in provider_key.lower() and current_delay is None:
+        current_delay = LEGACY_PROPAGATION_DELAY
+    elif current_delay is None:
+        current_delay = DEFAULT_PROPAGATION_DELAY
+
     cmd = [
         "certbot", "certonly", "--non-interactive", "--agree-tos",
         "--email", email, f"--dns-{plugin}",
         f"--dns-{plugin}-credentials", str(creds_path),
-        "--dns-rfc2136-propagation-seconds", str(args.propagation_delay),
+        f"--dns-{plugin}-propagation-seconds", str(current_delay),
         "--keep-until-expiring", "-d", fqdn
     ]
 
