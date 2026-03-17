@@ -6,6 +6,7 @@ A high-availability automation engine for TLS certificate lifecycles.
 """
 
 import argparse
+import cmd
 import csv
 import sys
 import subprocess
@@ -56,9 +57,11 @@ def run_certbot(fqdn, provider_key, email, hook_script):
         "--email", email, f"--dns-{plugin}",
         f"--dns-{plugin}-credentials", str(creds_path),
         "--dns-rfc2136-propagation-seconds", str(args.propagation_delay),
-        "--keep-until-expiring", "-d", fqdn,
-        "--vvv" if args.verbose else ""
+        "--keep-until-expiring", "-d", fqdn
     ]
+
+    if args.verbose:
+        cmd.append("-vvv")
 
     if hook_script:
         cmd.extend(["--deploy-hook", f"{hook_script} {fqdn}"])
