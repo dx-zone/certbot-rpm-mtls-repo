@@ -30,7 +30,7 @@ parser = argparse.ArgumentParser(
     description="🛠️  Certbot Manager: Automated TLS lifecycle for Enterprise Infrastructure.",
     formatter_class=argparse.RawDescriptionHelpFormatter
 )
-parser.add_argument("--csv", required=True, help="Mandatory: Path to the CSV file.")
+parser.add_argument("--csv", required=True, help="Mandatory: Path to the CSV file listing domains,dns_provider,email per line.")
 parser.add_argument("--hook", help="Optional: Executable script to run after success.")
 parser.add_argument("--frequency", type=int, default=60, help="Frequency in minutes.")
 parser.add_argument("--propagation-delay", type=int, default=60, help="DNS propagation delay in seconds (default: 60).")
