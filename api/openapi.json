@@ -1,0 +1,158 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Certbot Manager API",
+    "description": "A secure mTLS gateway for automating Certbot certificate renewals via CSV management and Docker orchestration.",
+    "version": "1.1.0"
+  },
+  "servers": [
+    {
+      "url": "https://x.mydatacenter.io:8443",
+      "description": "Production API (mTLS Required)"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "mutualTLS": {
+        "type": "mutualTLS"
+      }
+    },
+    "schemas": {
+      "Certificate": {
+        "type": "object",
+        "required": [
+          "fqdn",
+          "dns_provider",
+          "email"
+        ],
+        "properties": {
+          "fqdn": {
+            "type": "string",
+            "example": "test.mydatacenter.io"
+          },
+          "dns_provider": {
+            "type": "string",
+            "example": "cloudflare"
+          },
+          "email": {
+            "type": "string",
+            "example": "admin@mydatacenter.io"
+          }
+        }
+      },
+      "MessageResponse": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/healthcheck": {
+      "get": {
+        "summary": "Service Status",
+        "description": "Public endpoint to check if the API is up. Bypasses mTLS and IP filters.",
+        "responses": {
+          "200": {
+            "description": "System is healthy",
+            "content": {
+              "application/json": {
+                "example": {
+                  "status": "UP",
+                  "timestamp": "2026-03-31T17:32:35-04:00"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/certs": {
+      "get": {
+        "summary": "List Certificates",
+        "security": [{"mutualTLS": []}],
+        "responses": {
+          "200": {
+            "description": "A list of active certificate configurations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Certificate" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Add Certificate",
+        "security": [{"mutualTLS": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/Certificate" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MessageResponse" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove Certificate",
+        "security": [{"mutualTLS": []}],
+        "parameters": [
+          {
+            "name": "fqdn",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "The FQDN to remove from the configuration"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MessageResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reload": {
+      "post": {
+        "summary": "Reload Certbot",
+        "description": "Triggers a restart of the specified Docker container to sync with the updated CSV.",
+        "security": [{"mutualTLS": []}],
+        "responses": {
+          "200": {
+            "description": "Container restarted",
+            "content": {
+              "application/json": {
+                "example": { "message": "Container restarted successfully" }
+              }
+            }
+          },
+          "500": {
+            "description": "Docker execution error"
+          }
+        }
+      }
+    }
+  }
+}
