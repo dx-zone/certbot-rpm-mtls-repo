@@ -1,32 +1,192 @@
-#!/bin/bash
-# This script is responsible for launching the API server that will handle certificate management and mTLS authentication for the RPM repository. It loads necessary environment variables from the .env file, ensures that required files for client authentication are created, and then starts the API server with the appropriate TLS configuration.
+#!/usr/bin/env bash
+# run-api-server.sh
+#
+# Starts the certificate manager API with:
+# - HTTPS enabled
+# - mTLS client validation enabled
+# - optional IP allow/deny list support
+#
+# Expected configuration comes from .env
 
-# Load environment variables from the .env file. This file should contain all the necessary configuration for the API server, including paths to TLS certificates, client authentication files, and other relevant settings. If the .env file is missing, the script will exit with an error message to prevent misconfiguration.
-if [ ! -f .env ]; then
-  echo "Error: .env file not found. Please create a .env file with the necessary configuration."
-  exit 1
-fi
-source .env
+set -Eeuo pipefail
 
-# Ensure that the files for mTLS client authentication exist. The API server will use these files to verify the identity of clients that connect to it. If these files do not exist, the script will create them as empty files. This is important for the proper functioning of the API server, as it relies on these files to manage client access and ensure secure communication.
-echo "${CLIENT_NAME}" > ${API_MTLS_CLIENTS_FILE}
-
-# The API server will use the ${API_MTLS_CLIENTS_FILE} to determine which clients are allowed to connect to it. By writing the CLIENT_NAME to this file, we are effectively allowing that client to authenticate with the API server using mTLS. Make sure that the CLIENT_NAME variable is set correctly in the .env file, and that the corresponding client certificate is properly configured for mTLS authentication.
-create_files() {
-  touch ${API_MTLS_CLIENTS_FILE}
-  touch ${API_MTLS_IPS_FILE}
+# ------------------------------------------------------------------------------
+# Logging helpers
+# ------------------------------------------------------------------------------
+log() {
+  printf "\n🔹 %s\n" "$1"
 }
 
-# Launch the API
-# NOTE: mTLS material in .env is pointing to the same mTLS material to access the RPM repository. This is intentional, as the API server needs to authenticate itself to the RPM repository using mTLS, and it also needs to authenticate clients that connect to it using mTLS. By using the same mTLS material for both purposes, we can simplify the configuration and ensure that the API server can securely communicate with both the RPM repository and its clients.
-# Consider generating separate mTLS material for the API server to avoid potential security risks and to follow best practices for secure communication. This would involve creating a separate client certificate for the API server to use when authenticating with the RPM repository, and a separate set of client certificates for clients that connect to the API server. This way, you can have better control over access and improve the overall security of your system.
-# TODO: Implement separate mTLS material for the API server and clients to enhance security and follow best practices for secure communication.
-./cert-manager-api \
-  -listen :8000 \
-  -tls-cert ${API_TLS_CERT_FILE} \
-  -tls-key ${API_TLS_KEY_FILE} \
-  -mtls-client-ca ${API_MTLS_CA_FILE} \
-  -mtls-allowed-cns ${API_MTLS_CLIENTS_FILE} \
-  -ip-list ${API_MTLS_IPS_FILE} \
-  -cert-csv ${API_CERT_CSV} \
-  -cert-manager ${API_CERT_MANAGER}
+info() {
+  printf "ℹ️  %s\n" "$1"
+}
+
+success() {
+  printf "✅ %s\n" "$1"
+}
+
+warn() {
+  printf "⚠️  %s\n" "$1"
+}
+
+error() {
+  printf "❌ %s\n" "$1" >&2
+}
+
+divider() {
+  printf '%s\n' "------------------------------------------------------------"
+}
+
+# ------------------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------------------
+require_file() {
+  local file="$1"
+  local label="$2"
+
+  if [[ ! -f "$file" ]]; then
+    error "$label not found: $file"
+    exit 1
+  fi
+}
+
+require_non_empty_var() {
+  local var_name="$1"
+  if [[ -z "${!var_name:-}" ]]; then
+    error "Required environment variable is missing or empty: $var_name"
+    exit 1
+  fi
+}
+
+ensure_parent_dir() {
+  local path="$1"
+  mkdir -p "$(dirname "$path")"
+}
+
+add_line_if_missing() {
+  local value="$1"
+  local file="$2"
+
+  touch "$file"
+
+  if ! grep -Fxq "$value" "$file"; then
+    printf '%s\n' "$value" >> "$file"
+    success "Added allowed client CN: $value"
+  else
+    info "Allowed client CN already present: $value"
+  fi
+}
+
+# ------------------------------------------------------------------------------
+# Load environment
+# ------------------------------------------------------------------------------
+log "Loading configuration"
+
+if [[ ! -f .env ]]; then
+  error ".env file not found in the current directory"
+  info "Create .env before starting the API server"
+  exit 1
+fi
+
+set -a
+# shellcheck disable=SC1091
+source .env
+set +a
+
+success "Environment loaded from .env"
+
+# ------------------------------------------------------------------------------
+# Validate required configuration
+# ------------------------------------------------------------------------------
+log "Validating required settings"
+
+required_vars=(
+  REPO_FQDN
+  CLIENT_NAME
+  API_MTLS_CLIENTS_FILE
+  API_MTLS_IPS_FILE
+  API_MTLS_CA_FILE
+  API_TLS_CERT_FILE
+  API_TLS_KEY_FILE
+  API_CERT_CSV
+  API_CERT_MANAGER
+)
+
+for var in "${required_vars[@]}"; do
+  require_non_empty_var "$var"
+done
+
+success "All required environment variables are present"
+
+# ------------------------------------------------------------------------------
+# Prepare runtime files
+# ------------------------------------------------------------------------------
+log "Preparing mTLS allowlist files"
+
+ensure_parent_dir "$API_MTLS_CLIENTS_FILE"
+ensure_parent_dir "$API_MTLS_IPS_FILE"
+
+touch "$API_MTLS_CLIENTS_FILE"
+touch "$API_MTLS_IPS_FILE"
+
+success "Allowlist files are ready"
+
+# Keep the client CN list persistent and avoid duplicates
+add_line_if_missing "$CLIENT_NAME" "$API_MTLS_CLIENTS_FILE"
+
+if [[ ! -s "$API_MTLS_IPS_FILE" ]]; then
+  warn "IP restriction file exists but is currently empty: $API_MTLS_IPS_FILE"
+  info "mTLS CN validation will still apply"
+fi
+
+# ------------------------------------------------------------------------------
+# Validate runtime dependencies
+# ------------------------------------------------------------------------------
+log "Checking certificate and data files"
+
+require_file "$API_MTLS_CA_FILE" "mTLS CA file"
+require_file "$API_TLS_CERT_FILE" "API TLS certificate"
+require_file "$API_TLS_KEY_FILE" "API TLS private key"
+require_file "./cert-manager-api" "API binary"
+
+if [[ ! -f "$API_CERT_CSV" ]]; then
+  warn "Certificate CSV not found yet: $API_CERT_CSV"
+  info "The API may still start if it can create or tolerate this file later"
+else
+  success "Certificate CSV found"
+fi
+
+success "Critical runtime files look good"
+
+# ------------------------------------------------------------------------------
+# Startup summary
+# ------------------------------------------------------------------------------
+log "API startup summary"
+printf "🌐 Repo FQDN:           %s\n" "$REPO_FQDN"
+printf "👤 Allowed client CN:   %s\n" "$CLIENT_NAME"
+printf "📄 CN allowlist file:   %s\n" "$API_MTLS_CLIENTS_FILE"
+printf "🌍 IP rules file:       %s\n" "$API_MTLS_IPS_FILE"
+printf "🛡️  mTLS CA file:        %s\n" "$API_MTLS_CA_FILE"
+printf "🔐 TLS cert file:       %s\n" "$API_TLS_CERT_FILE"
+printf "🔑 TLS key file:        %s\n" "$API_TLS_KEY_FILE"
+printf "📊 Cert CSV:            %s\n" "$API_CERT_CSV"
+printf "🛠️  Cert manager:        %s\n" "$API_CERT_MANAGER"
+
+divider
+warn "This API currently reuses mTLS-related material from the broader repo PKI layout"
+info "That may be intentional for now, but separate identities would be cleaner and safer long-term"
+
+# ------------------------------------------------------------------------------
+# Launch
+# ------------------------------------------------------------------------------
+log "Starting cert-manager-api"
+
+exec ./cert-manager-api \
+  -listen ":8000" \
+  -tls-cert "$API_TLS_CERT_FILE" \
+  -tls-key "$API_TLS_KEY_FILE" \
+  -mtls-client-ca "$API_MTLS_CA_FILE" \
+  -mtls-allowed-cns "$API_MTLS_CLIENTS_FILE" \
+  -ip-list "$API_MTLS_IPS_FILE" \
+  -cert-csv "$API_CERT_CSV" \
+  -cert-manager "$API_CERT_MANAGER"
