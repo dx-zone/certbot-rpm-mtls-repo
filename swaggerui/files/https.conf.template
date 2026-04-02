@@ -1,0 +1,41 @@
+# HTTPS server for Swagger UI
+# This file is processed with envsubst before Nginx starts.
+# Expected variables:
+#   - ${REPO_FQDN}
+#   - ${SWAGGER_JSON_URL}
+
+server {
+    # Nginx listens on 8080 with TLS enabled.
+    # The container/platform can expose this however it wants externally.
+    listen 8080 ssl;
+    server_name ${REPO_FQDN};
+
+    # TLS certificate files mounted into the container
+    ssl_certificate     /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+
+    # Modern TLS only
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    # Serve the Swagger UI static files
+    root /usr/share/nginx/html;
+    index index.html index.htm;
+
+    location / {
+        # Prevent odd redirects if the service is behind another proxy/load balancer
+        absolute_redirect off;
+
+        # Replace the default Petstore spec URL in Swagger UI
+        # with the real spec URL provided at runtime.
+        sub_filter_once on;
+        sub_filter 'https://petstore.swagger.io/v2/swagger.json' '${SWAGGER_JSON_URL}';
+    }
+
+    # Basic error page for upstream/server failures
+    error_page 500 502 503 504 /50x.html;
+    location = /50x.html {
+        root /usr/share/nginx/html;
+    }
+}
