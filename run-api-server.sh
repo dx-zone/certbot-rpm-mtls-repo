@@ -147,7 +147,7 @@ log "Checking certificate and data files"
 require_file "$API_MTLS_CA_FILE" "mTLS CA file"
 require_file "$API_TLS_CERT_FILE" "API TLS certificate"
 require_file "$API_TLS_KEY_FILE" "API TLS private key"
-require_file "./cert-manager-api" "API binary"
+require_file "./api/cert-manager-api" "API binary"
 
 if [[ ! -f "$API_CERT_CSV" ]]; then
   warn "Certificate CSV not found yet: $API_CERT_CSV"
@@ -181,7 +181,7 @@ info "That may be intentional for now, but separate identities would be cleaner 
 # ------------------------------------------------------------------------------
 log "Starting cert-manager-api"
 
-exec ./cert-manager-api \
+exec ./api/cert-manager-api \
   -listen ":8000" \
   -tls-cert "$API_TLS_CERT_FILE" \
   -tls-key "$API_TLS_KEY_FILE" \
