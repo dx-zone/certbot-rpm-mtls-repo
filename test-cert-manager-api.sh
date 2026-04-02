@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# test-api.sh
+# test-cert-manager-api.sh
 #
-# Friendly test runner for the cert-manager API.
+# Friendly mTLS test runner for the cert-manager API.
 #
 # Usage:
-#   ./test-api.sh health
-#   ./test-api.sh list
-#   ./test-api.sh add
-#   ./test-api.sh delete
-#   ./test-api.sh reload
-#   ./test-api.sh invalid-path
-#   ./test-api.sh invalid-method
-#   ./test-api.sh all
+#   ./test-cert-manager-api.sh health
+#   ./test-cert-manager-api.sh list
+#   ./test-cert-manager-api.sh add
+#   ./test-cert-manager-api.sh delete
+#   ./test-cert-manager-api.sh reload
+#   ./test-cert-manager-api.sh invalid-path
+#   ./test-cert-manager-api.sh invalid-method
+#   ./test-cert-manager-api.sh all
 
 set -Eeuo pipefail
 
@@ -44,15 +44,15 @@ divider() {
 
 usage() {
   cat <<'EOF'
-Usage: ./test-api.sh {health|list|add|delete|reload|invalid-path|invalid-method|all}
+Usage: ./test-cert-manager-api.sh {health|list|add|delete|reload|invalid-path|invalid-method|all}
 
 Examples:
-  ./test-api.sh health
-  ./test-api.sh list
-  ./test-api.sh add
-  ./test-api.sh delete
-  ./test-api.sh reload
-  ./test-api.sh all
+  ./test-cert-manager-api.sh health
+  ./test-cert-manager-api.sh list
+  ./test-cert-manager-api.sh add
+  ./test-cert-manager-api.sh delete
+  ./test-cert-manager-api.sh reload
+  ./test-cert-manager-api.sh all
 EOF
 }
 
@@ -99,7 +99,7 @@ run_request() {
 
   log "Testing ${method} ${endpoint}"
   printf "🌐 URL: %s%s\n" "$BASE_URL" "$endpoint"
-  printf "🛡️  mTLS client: %s\n" "$CLIENT_NAME"
+  printf "🛡️  API mTLS client: %s\n" "$API_MTLS_CLIENT_NAME_EFFECTIVE"
   printf "📄 CA: %s\n" "$CA_CERT"
   printf "📄 Client cert: %s\n" "$CLIENT_CERT"
   printf "🔑 Client key: %s\n" "$CLIENT_KEY"
@@ -168,13 +168,22 @@ set +a
 success "Loaded configuration from .env"
 
 # ------------------------------------------------------------------------------
+# Resolve effective API mTLS identity
+# Priority:
+#   1. API-specific
+#   2. RPM repo scoped
+#   3. Legacy shared
+#   4. Hard default
+# ------------------------------------------------------------------------------
+API_MTLS_CLIENT_NAME_EFFECTIVE="${API_MTLS_CLIENT_NAME:-${RPMREPO_MTLS_CLIENT_NAME:-${CLIENT_NAME:-cert-manager-automation-client}}}"
+
+# ------------------------------------------------------------------------------
 # Validate required settings
 # ------------------------------------------------------------------------------
 log "Validating test configuration"
 
 required_vars=(
   REPO_FQDN
-  CLIENT_NAME
   API_MTLS_CA_FILE
 )
 
@@ -182,12 +191,12 @@ for var in "${required_vars[@]}"; do
   require_non_empty_var "$var"
 done
 
-API_PORT="${API_PORT:-8443}"
+API_PORT="${API_PORT:-8000}"
 BASE_URL="https://${REPO_FQDN}:${API_PORT}"
 
 CA_CERT="$API_MTLS_CA_FILE"
-CLIENT_CERT="$(dirname "$API_MTLS_CA_FILE")/${CLIENT_NAME}.crt"
-CLIENT_KEY="$(dirname "$API_MTLS_CA_FILE")/${CLIENT_NAME}.key"
+CLIENT_CERT="$(dirname "$CA_CERT")/${API_MTLS_CLIENT_NAME_EFFECTIVE}.crt"
+CLIENT_KEY="$(dirname "$CA_CERT")/${API_MTLS_CLIENT_NAME_EFFECTIVE}.key"
 CURL_BIN="${CURL_BIN:-/usr/bin/curl}"
 
 require_file "$CA_CERT" "CA certificate"
@@ -204,10 +213,13 @@ fi
 success "Test prerequisites look good"
 
 log "API target summary"
-printf "🌐 Repo FQDN:   %s\n" "$REPO_FQDN"
-printf "🔌 API port:    %s\n" "$API_PORT"
-printf "🔗 Base URL:    %s\n" "$BASE_URL"
-printf "👤 Client CN:   %s\n" "$CLIENT_NAME"
+printf "🌐 Repo FQDN:      %s\n" "$REPO_FQDN"
+printf "🔌 API port:       %s\n" "$API_PORT"
+printf "🔗 Base URL:       %s\n" "$BASE_URL"
+printf "👤 API client CN:  %s\n" "$API_MTLS_CLIENT_NAME_EFFECTIVE"
+printf "📄 CA file:        %s\n" "$CA_CERT"
+printf "📄 Client cert:    %s\n" "$CLIENT_CERT"
+printf "🔑 Client key:     %s\n" "$CLIENT_KEY"
 
 divider
 

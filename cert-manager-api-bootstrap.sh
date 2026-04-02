@@ -3,7 +3,7 @@
 # 🔐 bootstrap-cert-manager-api.sh
 # ------------------------------------------------------------------------------
 # Purpose:
-#   Prepare the files required by cert-manager-api, generate missing mTLS
+#   Prepare the files required by cert-manager-api, generate missing API mTLS
 #   material when needed, and optionally launch the API.
 #
 # Priority order:
@@ -11,13 +11,10 @@
 #   2. .env values
 #   3. Built-in defaults
 #
-# Required API inputs:
-#   - server.crt / TLS cert
-#   - server.key / TLS key
-#   - ips.txt
-#   - ca.crt
-#   - clients.txt
-#   - certificates.csv
+# Security model:
+#   - API mTLS identities should be separate from rpmrepo mTLS identities
+#   - This script prefers API_MTLS_* variables first
+#   - Then falls back to RPMREPO_MTLS_* and finally legacy shared vars
 ################################################################################
 
 set -euo pipefail
@@ -56,8 +53,15 @@ die() {
 ENV_FILE=".env"
 
 DEFAULT_REPO_FQDN="repo.example.com"
+
+# Legacy/shared defaults
 DEFAULT_CA_NAME="Internal-RPM-Repo-CA"
 DEFAULT_CLIENT_NAME="mtls-client-identity"
+
+# API-specific defaults
+DEFAULT_API_MTLS_CA_NAME="Internal-Cert-Manager-API-CA"
+DEFAULT_API_MTLS_CLIENT_NAME="cert-manager-automation-client"
+
 DEFAULT_API_PORT="8000"
 DEFAULT_API_BIN="./api/cert-manager-api"
 DEFAULT_IP_POLICY="allow"
@@ -65,8 +69,9 @@ DEFAULT_CERT_MANAGER="certbot"
 
 DEFAULT_WORK_BASE="./secrets/api-secrets"
 DEFAULT_PKI_DIR="${DEFAULT_WORK_BASE}/pki_mtls_material"
+
 DEFAULT_IPS_FILE="./api/mtls-api-clients-ip.txt"
-DEFAULT_CLIENTS_FILE="./api/mtls-api-clients.txt"
+DEFAULT_CLIENTS_FILE="./api/mtls-api-clients-cn.txt"
 DEFAULT_CA_FILE="./secrets/api-secrets/pki_mtls_material/ca.crt"
 DEFAULT_CERT_CSV="./datastore/certbot-data/letsencrypt/certificates.csv"
 
@@ -83,8 +88,11 @@ FORCE=false
 
 API_BIN=""
 REPO_FQDN=""
-CA_NAME=""
-CLIENT_NAME=""
+
+# Names used specifically for API-generated mTLS material
+API_MTLS_CA_NAME_EFFECTIVE=""
+API_MTLS_CLIENT_NAME_EFFECTIVE=""
+
 API_PORT=""
 LISTEN_ADDR=""
 IP_POLICY=""
@@ -115,8 +123,10 @@ Options:
 
   --api-bin PATH            API binary path
   --fqdn DOMAIN             Repo/API FQDN
-  --ca-name NAME            Internal CA common name
-  --client-name NAME        Allowed client certificate CN
+
+  --api-mtls-ca-name NAME   API mTLS root CA Common Name
+  --api-mtls-client-name NAME
+                            API mTLS client identity CN
 
   --api-port PORT           API port (used if --listen is not set)
   --listen ADDR             Full listen address, example: :8000
@@ -207,8 +217,8 @@ while [[ $# -gt 0 ]]; do
     --force) FORCE=true ;;
     --api-bin) API_BIN="${2:?Missing value for --api-bin}"; shift ;;
     --fqdn) REPO_FQDN="${2:?Missing value for --fqdn}"; shift ;;
-    --ca-name) CA_NAME="${2:?Missing value for --ca-name}"; shift ;;
-    --client-name) CLIENT_NAME="${2:?Missing value for --client-name}"; shift ;;
+    --api-mtls-ca-name) API_MTLS_CA_NAME_EFFECTIVE="${2:?Missing value for --api-mtls-ca-name}"; shift ;;
+    --api-mtls-client-name) API_MTLS_CLIENT_NAME_EFFECTIVE="${2:?Missing value for --api-mtls-client-name}"; shift ;;
     --api-port) API_PORT="${2:?Missing value for --api-port}"; shift ;;
     --listen) LISTEN_ADDR="${2:?Missing value for --listen}"; shift ;;
     --ip-policy) IP_POLICY="${2:?Missing value for --ip-policy}"; shift ;;
@@ -244,12 +254,25 @@ else
   warn "No .env file found at ${ENV_FILE}; falling back to defaults"
 fi
 
-# Core/shared vars
+# ------------------------------------------------------------------------------
+# Resolve effective configuration
+# ------------------------------------------------------------------------------
 REPO_FQDN="${REPO_FQDN:-${REPO_FQDN:-$DEFAULT_REPO_FQDN}}"
-CA_NAME="${CA_NAME:-${CA_NAME:-$DEFAULT_CA_NAME}}"
-CLIENT_NAME="${CLIENT_NAME:-${CLIENT_NAME:-$DEFAULT_CLIENT_NAME}}"
 
-# API vars
+# Prefer API-specific names first, then RPMREPO-scoped, then legacy shared vars
+API_MTLS_CA_NAME_EFFECTIVE="${API_MTLS_CA_NAME_EFFECTIVE:-${API_MTLS_CA_NAME:-${RPMREPO_MTLS_CA_NAME:-${CA_NAME:-$DEFAULT_API_MTLS_CA_NAME}}}}"
+API_MTLS_CLIENT_NAME_EFFECTIVE="${API_MTLS_CLIENT_NAME_EFFECTIVE:-${API_MTLS_CLIENT_NAME:-${RPMREPO_MTLS_CLIENT_NAME:-${CLIENT_NAME:-$DEFAULT_API_MTLS_CLIENT_NAME}}}}"
+
+# If legacy CA_NAME/CLIENT_NAME are the only things present, use them.
+# If nothing is present at all, use explicit API defaults instead of repo defaults.
+if [[ -z "${API_MTLS_CA_NAME_EFFECTIVE}" ]]; then
+  API_MTLS_CA_NAME_EFFECTIVE="$DEFAULT_API_MTLS_CA_NAME"
+fi
+
+if [[ -z "${API_MTLS_CLIENT_NAME_EFFECTIVE}" ]]; then
+  API_MTLS_CLIENT_NAME_EFFECTIVE="$DEFAULT_API_MTLS_CLIENT_NAME"
+fi
+
 API_PORT="${API_PORT:-${API_PORT:-$DEFAULT_API_PORT}}"
 LISTEN_ADDR="${LISTEN_ADDR:-:${API_PORT}}"
 IP_POLICY="${IP_POLICY:-$DEFAULT_IP_POLICY}"
@@ -270,19 +293,19 @@ CERT_CSV="${CERT_CSV:-${API_CERT_CSV_FILE:-${API_CERT_CSV:-$DEFAULT_CERT_CSV}}}"
 [[ -n "$REPO_FQDN" ]] || die "REPO_FQDN is required"
 [[ "$IP_POLICY" =~ ^(allow|deny)$ ]] || die "ip-policy must be allow or deny"
 
-info "FQDN          : $REPO_FQDN"
-info "CA Name       : $CA_NAME"
-info "Client Name   : $CLIENT_NAME"
-info "API Port      : $API_PORT"
-info "Listen Addr   : $LISTEN_ADDR"
-info "API Binary    : $API_BIN"
-info "TLS Cert      : $TLS_CERT_PATH"
-info "TLS Key       : $TLS_KEY_PATH"
-info "mTLS CA       : $CA_CERT_PATH"
-info "Client CN File: $CLIENTS_FILE"
-info "IP ACL File   : $IPS_FILE"
-info "Cert CSV      : $CERT_CSV"
-info "Cert Manager  : $CERT_MANAGER"
+info "FQDN              : $REPO_FQDN"
+info "API mTLS CA Name  : $API_MTLS_CA_NAME_EFFECTIVE"
+info "API mTLS Client CN: $API_MTLS_CLIENT_NAME_EFFECTIVE"
+info "API Port          : $API_PORT"
+info "Listen Addr       : $LISTEN_ADDR"
+info "API Binary        : $API_BIN"
+info "TLS Cert          : $TLS_CERT_PATH"
+info "TLS Key           : $TLS_KEY_PATH"
+info "mTLS CA File      : $CA_CERT_PATH"
+info "Client CN File    : $CLIENTS_FILE"
+info "IP ACL File       : $IPS_FILE"
+info "Cert CSV          : $CERT_CSV"
+info "Cert Manager      : $CERT_MANAGER"
 
 # ------------------------------------------------------------------------------
 # ✅ Pre-flight
@@ -313,24 +336,26 @@ success "Workspace ready"
 # ------------------------------------------------------------------------------
 GEN_CA_KEY="${PKI_DIR}/ca.key"
 GEN_CA_CERT="${PKI_DIR}/ca.crt"
+
 GEN_SERVER_KEY="${PKI_DIR}/server.key"
 GEN_SERVER_CSR="${PKI_DIR}/server.csr"
 GEN_SERVER_CERT="${PKI_DIR}/server.crt"
 GEN_SERVER_EXT="${PKI_DIR}/server-ext.cnf"
-GEN_CLIENT_KEY="${PKI_DIR}/${CLIENT_NAME}.key"
-GEN_CLIENT_CSR="${PKI_DIR}/${CLIENT_NAME}.csr"
-GEN_CLIENT_CERT="${PKI_DIR}/${CLIENT_NAME}.crt"
+
+GEN_CLIENT_KEY="${PKI_DIR}/${API_MTLS_CLIENT_NAME_EFFECTIVE}.key"
+GEN_CLIENT_CSR="${PKI_DIR}/${API_MTLS_CLIENT_NAME_EFFECTIVE}.csr"
+GEN_CLIENT_CERT="${PKI_DIR}/${API_MTLS_CLIENT_NAME_EFFECTIVE}.crt"
 
 # ------------------------------------------------------------------------------
-# 🛡️ Generate CA only if CA file path is missing
+# 🛡️ Generate API CA only if CA file path is missing
 # ------------------------------------------------------------------------------
-header "CA Material"
+header "API CA Material"
 
 if file_missing_or_empty "$CA_CERT_PATH"; then
-  warn "CA file missing. Generating internal CA at ${GEN_CA_CERT}"
+  warn "CA file missing. Generating API mTLS CA at ${GEN_CA_CERT}"
 
   if [[ -f "$GEN_CA_KEY" && -f "$GEN_CA_CERT" && "$FORCE" != "true" ]]; then
-    info "Reusing existing generated CA from ${PKI_DIR}"
+    info "Reusing existing generated API CA from ${PKI_DIR}"
   else
     run_cmd "openssl genrsa -out '$GEN_CA_KEY' 4096"
     run_cmd "openssl req -x509 -new -nodes \
@@ -338,13 +363,13 @@ if file_missing_or_empty "$CA_CERT_PATH"; then
       -sha256 \
       -days '$DEFAULT_DAYS_VALID_CA' \
       -out '$GEN_CA_CERT' \
-      -subj '/C=US/ST=Infrastructure/O=Internal PKI/CN=${CA_NAME}'"
-    success "Generated internal CA"
+      -subj '/C=US/ST=Infrastructure/O=Internal API PKI/CN=${API_MTLS_CA_NAME_EFFECTIVE}'"
+    success "Generated API mTLS CA"
   fi
 
   if [[ "$CA_CERT_PATH" != "$GEN_CA_CERT" ]]; then
     run_cmd "cp -f '$GEN_CA_CERT' '$CA_CERT_PATH'"
-    success "Copied CA cert to ${CA_CERT_PATH}"
+    success "Copied API CA cert to ${CA_CERT_PATH}"
   fi
 else
   success "CA file already exists: ${CA_CERT_PATH}"
@@ -352,13 +377,13 @@ fi
 
 # ------------------------------------------------------------------------------
 # 🌐 TLS cert/key for API
-# Prefer existing configured files from .env.
+# Prefer configured files from .env.
 # Only generate fallback server certs if missing.
 # ------------------------------------------------------------------------------
 header "API TLS Material"
 
 if file_missing_or_empty "$TLS_CERT_PATH" || file_missing_or_empty "$TLS_KEY_PATH"; then
-  warn "Configured TLS cert/key missing. Generating fallback server cert in ${PKI_DIR}"
+  warn "Configured TLS cert/key missing. Generating fallback API server cert in ${PKI_DIR}"
 
   [[ -f "$CA_CERT_PATH" ]] || die "Cannot generate fallback server cert because CA file is missing: $CA_CERT_PATH"
   [[ -f "$GEN_CA_KEY" ]] || die "Cannot sign fallback server cert because CA key is missing: $GEN_CA_KEY"
@@ -399,19 +424,19 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# 👤 Generate client identity if useful for bootstrapping/validation
+# 👤 Generate API client identity if useful for bootstrap/validation
 # ------------------------------------------------------------------------------
-header "Client Identity"
+header "API Client Identity"
 
 if [[ -f "$GEN_CLIENT_CERT" && -f "$GEN_CLIENT_KEY" && "$FORCE" != "true" ]]; then
-  info "Client identity already exists in ${PKI_DIR}"
+  info "API client identity already exists in ${PKI_DIR}"
 else
   if [[ -f "$GEN_CA_KEY" && -f "$CA_CERT_PATH" ]]; then
     run_cmd "openssl genrsa -out '$GEN_CLIENT_KEY' 2048"
     run_cmd "openssl req -new \
       -key '$GEN_CLIENT_KEY' \
       -out '$GEN_CLIENT_CSR' \
-      -subj '/CN=${CLIENT_NAME}'"
+      -subj '/CN=${API_MTLS_CLIENT_NAME_EFFECTIVE}'"
     run_cmd "openssl x509 -req \
       -in '$GEN_CLIENT_CSR' \
       -CA '$CA_CERT_PATH' \
@@ -421,26 +446,26 @@ else
       -days '$DEFAULT_DAYS_VALID_CLIENT' \
       -sha256 \
       -extfile <(printf 'extendedKeyUsage=clientAuth\nkeyUsage=digitalSignature,keyEncipherment\nbasicConstraints=CA:FALSE\n')"
-    success "Generated client identity: ${CLIENT_NAME}"
+    success "Generated API client identity: ${API_MTLS_CLIENT_NAME_EFFECTIVE}"
   else
-    warn "Skipping client identity generation because CA key is not locally available"
+    warn "Skipping API client identity generation because CA key is not locally available"
   fi
 fi
 
 # ------------------------------------------------------------------------------
-# 📄 Prepare clients.txt
+# 📄 Prepare allowed CN file
 # ------------------------------------------------------------------------------
-header "Allowed mTLS Client CNs"
+header "Allowed API mTLS Client CNs"
 
 if file_missing_or_empty "$CLIENTS_FILE"; then
-  write_file "$CLIENTS_FILE" "${CLIENT_NAME}
+  write_file "$CLIENTS_FILE" "${API_MTLS_CLIENT_NAME_EFFECTIVE}
 "
   success "Seeded allowed client CN file"
 else
   info "Client CN allowlist already exists: $CLIENTS_FILE"
 fi
 
-append_unique_line "$CLIENTS_FILE" "$CLIENT_NAME"
+append_unique_line "$CLIENTS_FILE" "$API_MTLS_CLIENT_NAME_EFFECTIVE"
 
 if [[ -n "${ALLOWED_CNS//$'\n'/}" ]]; then
   while IFS= read -r cn; do
@@ -451,9 +476,9 @@ if [[ -n "${ALLOWED_CNS//$'\n'/}" ]]; then
 fi
 
 # ------------------------------------------------------------------------------
-# 📄 Prepare ips.txt
+# 📄 Prepare IP ACL file
 # ------------------------------------------------------------------------------
-header "IP Access Control"
+header "API IP Access Control"
 
 if file_missing_or_empty "$IPS_FILE"; then
   write_file "$IPS_FILE" "127.0.0.1
