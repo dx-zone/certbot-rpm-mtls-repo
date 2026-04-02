@@ -7,7 +7,7 @@
   },
   "servers": [
     {
-      "url": "https://x.example.com:8443",
+      "url": "https://prod.example.com:8443",
       "description": "Production API (mTLS Required)"
     }
   ],
