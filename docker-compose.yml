@@ -134,6 +134,39 @@ services:
       update-ca-trust && exec /client-entrypoint.sh"
     restart: unless-stopped
 
+  # --- SERVICE 4: SWAGGER UI (DEV TOOL) ---
+  # Optional service to visualize and interact with the API. Depends on certbot and rpmrepo to serve the OpenAPI spec.
+  swagger-ui:
+    build:
+      context: ./swaggerui
+      dockerfile: Dockerfile
+    depends_on:
+        certbot:
+          condition: service_started
+        rpmrepo:
+          condition: service_healthy
+    container_name: swagger-ui
+    environment:
+      # INJECTION: Load variables from .env required for envsubst in the Nginx config template to generate the actual config with correct FQDN and OpenAPI spec path.
+      - REPO_FQDN=${REPO_FQDN}
+      # This variable is used in the Nginx config template to point to the correct path of the OpenAPI spec. It should match the path where the spec is mounted in the container.
+      - SWAGGER_JSON=/api/openapi.json
+    ports:
+      - "8443:8080"
+    volumes:
+      # Use the absolute path to your spec
+      - ./api/openapi.json:/api/openapi.json:ro,Z
+      # Mount the certs from the shared datastore to enable HTTPS in the Swagger UI container. This allows you to access the Swagger UI securely using the same domain as the RPM repository.
+      - ./datastore/certbot-data/letsencrypt/live/${REPO_FQDN}/fullchain.pem:/etc/nginx/ssl/fullchain.pem:ro,Z
+      - ./datastore/certbot-data/letsencrypt/live/${REPO_FQDN}/privkey.pem:/etc/nginx/ssl/privkey.pem:ro,Z
+
+    networks:
+      default:
+        aliases:
+          - ${REPO_FQDN} # <--- IMPORTANT: This resolves the FQDN to this container based on .env variables.
+    restart: unless-stopped
+
+# --- NETWORK DEFINITION ---
 networks:
   default:
     name: pki_network  # Ensures a predictable network name for internal DNS
