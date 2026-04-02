@@ -2,41 +2,41 @@
   "openapi": "3.0.0",
   "info": {
     "title": "Certbot Manager API",
-    "description": "A secure mTLS gateway for automating Certbot certificate renewals via CSV management and Docker orchestration.",
-    "version": "1.1.0"
+    "version": "1.2.0",
+    "description": "A secure mTLS gateway for managing Certbot certificates via API.\n\n---\n\n## 🔐 Authentication Model (mTLS)\n\nThis API uses **mutual TLS (mTLS)**.\n\nThat means:\n- The server verifies the client certificate\n- The client must present a valid certificate during the TLS handshake\n\n---\n\n## 🌐 Using Swagger UI (this page)\n\nSwagger UI can describe and send requests, but:\n\n⚠️ It does NOT upload or manage client certificates.\n\nTo successfully call protected endpoints from this UI:\n1. Your browser must already have the client certificate installed\n2. The certificate must be trusted by the API server\n3. The browser must present the certificate during connection\n\nIf this is not configured:\n- Requests to protected endpoints will fail\n- This is expected behavior\n\n---\n\n## 🧪 Recommended Testing (CLI)\n\nUse curl or the provided script:\n\n```bash\ncurl \\\n  --cacert ca.crt \\\n  --cert mtls-client-identity.crt \\\n  --key mtls-client-identity.key \\\n  https://x.mydatacenter.io:8000/certs\n```\n\nOr:\n\n```bash\n./test-api.sh list\n```\n\n---\n\n## 🧭 Suggested Flow\n\n1. Call `/healthcheck` (no mTLS required)\n2. Try protected endpoints in Swagger UI (may fail)\n3. Copy curl example\n4. Run via CLI or test-api.sh\n\n---\n"
   },
   "servers": [
     {
-      "url": "https://prod.example.com:8443",
-      "description": "Production API (mTLS Required)"
+      "url": "https://x.mydatacenter.io:8000",
+      "description": "Cert Manager API (mTLS required for protected endpoints)"
     }
   ],
   "components": {
     "securitySchemes": {
       "mutualTLS": {
-        "type": "mutualTLS"
+        "type": "mutualTLS",
+        "description": "Protected endpoints require a valid client certificate issued by the trusted client-auth CA. Swagger UI will only work if the browser is already configured with this certificate."
       }
     },
     "schemas": {
       "Certificate": {
         "type": "object",
-        "required": [
-          "fqdn",
-          "dns_provider",
-          "email"
-        ],
+        "required": ["fqdn", "dns_provider", "email"],
         "properties": {
           "fqdn": {
             "type": "string",
-            "example": "test.example.com"
+            "example": "test.example.com",
+            "description": "Fully qualified domain name"
           },
           "dns_provider": {
             "type": "string",
-            "example": "cloudflare"
+            "example": "cloudflare",
+            "description": "DNS provider used for ACME challenge"
           },
           "email": {
             "type": "string",
-            "example": "admin@example.com"
+            "example": "admin@example.com",
+            "description": "Contact email for certificate registration"
           }
         }
       },
@@ -44,7 +44,22 @@
         "type": "object",
         "properties": {
           "message": {
-            "type": "string"
+            "type": "string",
+            "example": "Operation completed successfully"
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "UP"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-04-02T01:11:48Z"
           }
         }
       }
@@ -54,15 +69,14 @@
     "/healthcheck": {
       "get": {
         "summary": "Service Status",
-        "description": "Public endpoint to check if the API is up. Bypasses mTLS and IP filters.",
+        "description": "Public endpoint to verify API availability. Does NOT require mTLS.\n\n### Example\n```bash\ncurl https://x.mydatacenter.io:8000/healthcheck\n```",
         "responses": {
           "200": {
             "description": "System is healthy",
             "content": {
               "application/json": {
-                "example": {
-                  "status": "UP",
-                  "timestamp": "2026-03-31T17:32:35-04:00"
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
                 }
               }
             }
@@ -73,15 +87,18 @@
     "/certs": {
       "get": {
         "summary": "List Certificates",
+        "description": "Returns all configured certificates.\n\n🔐 **mTLS required**\n\n### CLI Example\n```bash\ncurl \\\n  --cacert ca.crt \\\n  --cert mtls-client-identity.crt \\\n  --key mtls-client-identity.key \\\n  https://x.mydatacenter.io:8000/certs\n```\n\n### Swagger UI Note\nThis will only work if your browser is already configured with a valid client certificate.",
         "security": [{"mutualTLS": []}],
         "responses": {
           "200": {
-            "description": "A list of active certificate configurations",
+            "description": "List of certificates",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "array",
-                  "items": { "$ref": "#/components/schemas/Certificate" }
+                  "items": {
+                    "$ref": "#/components/schemas/Certificate"
+                  }
                 }
               }
             }
@@ -90,12 +107,20 @@
       },
       "post": {
         "summary": "Add Certificate",
+        "description": "Creates a new certificate entry.\n\n🔐 **mTLS required**\n\n### CLI Example\n```bash\ncurl -X POST \\\n  --cacert ca.crt \\\n  --cert mtls-client-identity.crt \\\n  --key mtls-client-identity.key \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"fqdn\":\"test.example.com\",\"dns_provider\":\"cloudflare\",\"email\":\"admin@example.com\"}' \\\n  https://x.mydatacenter.io:8000/certs\n```",
         "security": [{"mutualTLS": []}],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/Certificate" }
+              "schema": {
+                "$ref": "#/components/schemas/Certificate"
+              },
+              "example": {
+                "fqdn": "test.example.com",
+                "dns_provider": "cloudflare",
+                "email": "admin@example.com"
+              }
             }
           }
         },
@@ -104,7 +129,12 @@
             "description": "Created",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/MessageResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                },
+                "example": {
+                  "message": "Certificate entry created successfully"
+                }
               }
             }
           }
@@ -112,6 +142,7 @@
       },
       "delete": {
         "summary": "Remove Certificate",
+        "description": "Deletes a certificate entry.\n\n🔐 **mTLS required**\n\n### CLI Example\n```bash\ncurl -X DELETE \\\n  --cacert ca.crt \\\n  --cert mtls-client-identity.crt \\\n  --key mtls-client-identity.key \\\n  \"https://x.mydatacenter.io:8000/certs?fqdn=test.example.com\"\n```",
         "security": [{"mutualTLS": []}],
         "parameters": [
           {
@@ -119,7 +150,7 @@
             "in": "query",
             "required": true,
             "schema": { "type": "string" },
-            "description": "The FQDN to remove from the configuration"
+            "example": "test.example.com"
           }
         ],
         "responses": {
@@ -127,7 +158,12 @@
             "description": "Deleted",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/MessageResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                },
+                "example": {
+                  "message": "Certificate entry removed successfully"
+                }
               }
             }
           }
@@ -137,19 +173,18 @@
     "/reload": {
       "post": {
         "summary": "Reload Certbot",
-        "description": "Triggers a restart of the specified Docker container to sync with the updated CSV.",
+        "description": "Restarts the certbot-related container.\n\n🔐 **mTLS required**\n\n### CLI Example\n```bash\ncurl -X POST \\\n  --cacert ca.crt \\\n  --cert mtls-client-identity.crt \\\n  --key mtls-client-identity.key \\\n  https://x.mydatacenter.io:8000/reload\n```",
         "security": [{"mutualTLS": []}],
         "responses": {
           "200": {
             "description": "Container restarted",
             "content": {
               "application/json": {
-                "example": { "message": "Container restarted successfully" }
+                "example": {
+                  "message": "Container restarted successfully"
+                }
               }
             }
-          },
-          "500": {
-            "description": "Docker execution error"
           }
         }
       }
