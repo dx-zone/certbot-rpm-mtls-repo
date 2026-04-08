@@ -193,6 +193,13 @@ shell_escape() {
   printf '%q' "$1"
 }
 
+service_status() {
+  log "Checking service status..."
+  systemctl --no-pager --full status "${SERVICE_NAME}" || true
+
+  log "Done"
+}
+
 render_unit() {
   local listen_addr="$1"
   local tls_cert="$2"
@@ -386,25 +393,24 @@ main() {
     warn "Skipping enable step because --no-enable was requested."
   fi
 
-  if [[ "${INSTALL_ONLY}" == true ]]; then
+    if [[ "${INSTALL_ONLY}" == true ]]; then
     warn "Skipping restart because --install-only was requested."
     log "Install complete."
+    service_status
     exit 0
   fi
 
   if [[ "${RESTART_SERVICE}" == false ]]; then
     warn "Skipping restart because --force was not requested."
     log "Install complete."
+    service_status
     exit 0
   else
     log "Restarting ${SERVICE_NAME}"
     systemctl restart "${SERVICE_NAME}"
   fi
 
-  log "Final service status"
-  systemctl --no-pager --full status "${SERVICE_NAME}" || true
-
-  log "Done"
+  service_status
 }
 
 main "$@"
