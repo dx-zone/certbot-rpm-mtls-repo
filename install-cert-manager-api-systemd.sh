@@ -12,7 +12,7 @@ set -Eeuo pipefail
 
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+readonly PROJECT_ROOT="${SCRIPT_DIR}"
 
 readonly SERVICE_NAME="cert-manager-api"
 readonly SERVICE_UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
