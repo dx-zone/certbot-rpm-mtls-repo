@@ -124,14 +124,6 @@ load_env_config() {
   success "Loaded configuration from $env_file"
 }
 
-  set -a
-  # shellcheck disable=SC1091
-  source "$env_file"
-  set +a
-
-  success "Loaded configuration from $env_file"
-}
-
 pretty_print_body() {
   local body="$1"
 
