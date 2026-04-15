@@ -1,7 +1,33 @@
 #!/usr/bin/env bash
-# cert-manager-api-client.sh
+################################################################################
+# 🔐 cert-manager-api-client.sh
+# ------------------------------------------------------------------------------
+# Purpose:
+#   Friendly mTLS-aware client for testing and interacting with the
+#   cert-manager API.
 #
-# Friendly mTLS test runner for the cert-manager API.
+# What this script does:
+#   - Loads endpoint and client identity settings from .env
+#   - Uses a client certificate and private key for mTLS authentication
+#   - Uses the system trust store by default for server TLS validation
+#   - Optionally uses a dedicated server CA bundle when API_SERVER_CA_FILE is set
+#
+# Trust model:
+#   - API_MTLS_CA_FILE is used to locate the client certificate/key material
+#   - API_SERVER_CA_FILE, when set, is used to verify the API server certificate
+#   - If API_SERVER_CA_FILE is unset, curl uses the operating system CA trust
+#
+# Priority order:
+#   1. CLI arguments
+#   2. .env values
+#   3. Built-in defaults
+#
+# Notes:
+#   - This script is designed for both public-TLS and internal/private-TLS API
+#     endpoints.
+#   - In environments where the API server uses a public certificate
+#     (for example Let's Encrypt), leave API_SERVER_CA_FILE unset.
+################################################################################
 
 set -Eeuo pipefail
 
@@ -47,6 +73,14 @@ Options:
   --dns VALUE             DNS provider (alias of --dns-provider)
   --dns-provider VALUE    DNS provider
   --email VALUE           Contact email for certificate registration
+
+Environment:
+  REPO_FQDN               API server hostname
+  API_PORT                API server port (default: 8000)
+  API_MTLS_CA_FILE        API mTLS CA file path; also used to derive client cert/key
+  API_MTLS_CLIENT_NAME    Client CN used to derive client cert/key filenames
+  API_SERVER_CA_FILE      Optional CA bundle for verifying the API server cert
+  CURL_BIN                Optional curl binary path override
 
 Examples:
   ./cert-manager-api-client.sh health
@@ -94,7 +128,8 @@ load_env_config() {
 
     printf "📌 Common optional variables:\n"
     printf "   API_MTLS_CLIENT_NAME=cert-manager-automation-client\n"
-    printf "   API_PORT=8000\n\n"
+    printf "   API_PORT=8000\n"
+    printf "   API_SERVER_CA_FILE=/path/to/server-ca-bundle.crt\n\n"
 
     printf "🧪 Used by 'all' test flow:\n"
     printf "   FQDN_CSV_ENTRY=test.example.com\n"
@@ -115,7 +150,6 @@ load_env_config() {
     exit 1
   fi
 
-  # Load environment
   set -a
   # shellcheck disable=SC1091
   source "$env_file"
@@ -191,9 +225,14 @@ run_request() {
   log "Testing ${method} ${endpoint}"
   printf "🌐 URL: %s%s\n" "$BASE_URL" "$endpoint"
   printf "🛡️  API mTLS client: %s\n" "$API_MTLS_CLIENT_NAME_EFFECTIVE"
-  printf "📄 CA: %s\n" "$CA_CERT"
+  printf "📄 API mTLS CA file: %s\n" "$CA_CERT"
   printf "📄 Client cert: %s\n" "$CLIENT_CERT"
   printf "🔑 Client key: %s\n" "$CLIENT_KEY"
+  if [[ -n "$SERVER_CA_CERT" ]]; then
+    printf "🌐 Server CA bundle: %s\n" "$SERVER_CA_CERT"
+  else
+    printf "🌐 Server CA bundle: system trust store\n"
+  fi
 
   if [[ -n "$data" ]]; then
     printf "📦 Payload: %s\n" "$data"
@@ -201,29 +240,29 @@ run_request() {
 
   divider
 
-  local response
-  if [[ -n "$data" ]]; then
-    response="$(
-      "$CURL_BIN" --silent --show-error --include \
-        --request "$method" \
-        --cacert "$CA_CERT" \
-        --cert "$CLIENT_CERT" \
-        --key "$CLIENT_KEY" \
-        --header "Content-Type: application/json" \
-        --data "$data" \
-        "${BASE_URL}${endpoint}"
-    )"
-  else
-    response="$(
-      "$CURL_BIN" --silent --show-error --include \
-        --request "$method" \
-        --cacert "$CA_CERT" \
-        --cert "$CLIENT_CERT" \
-        --key "$CLIENT_KEY" \
-        --header "Content-Type: application/json" \
-        "${BASE_URL}${endpoint}"
-    )"
+  local -a curl_args
+  curl_args=(
+    --silent
+    --show-error
+    --include
+    --request "$method"
+    --cert "$CLIENT_CERT"
+    --key "$CLIENT_KEY"
+    --header "Content-Type: application/json"
+  )
+
+  if [[ -n "$SERVER_CA_CERT" ]]; then
+    curl_args+=( --cacert "$SERVER_CA_CERT" )
   fi
+
+  if [[ -n "$data" ]]; then
+    curl_args+=( --data "$data" )
+  fi
+
+  local response
+  response="$(
+    "$CURL_BIN" "${curl_args[@]}" "${BASE_URL}${endpoint}"
+  )"
 
   local headers body status_line
   headers="$(printf '%s' "$response" | sed -n '1,/^\r$/p')"
@@ -315,29 +354,27 @@ main() {
 
   case "$COMMAND" in
     health)
-      run_request "GET" "/healthcheck" # This endpoint should be implemented by the API to provide a simple health check. It should return a 200 OK status if the API is healthy, and may include a simple JSON body with status information.
+      run_request "GET" "/healthcheck"
       ;;
     list)
-      run_request "GET" "/certs" # This endpoint should return a list of all certificates managed by the API.
+      run_request "GET" "/certs"
       ;;
     add)
       payload="$(build_add_payload "$FQDN" "$DNS_PROVIDER" "$EMAIL")"
-      run_request "POST" "/certs" "$payload" # This endpoint should create a new certificate with the provided FQDN, DNS provider, and email.
+      run_request "POST" "/certs" "$payload"
       ;;
     delete)
-      run_request "DELETE" "/certs?fqdn=${FQDN}" # This endpoint should delete the certificate associated with the provided FQDN.
+      run_request "DELETE" "/certs?fqdn=${FQDN}"
       ;;
     reload)
-      run_request "POST" "/reload" # This endpoint should reload the API configuration or certificates.
+      run_request "POST" "/reload"
       ;;
     invalid-path)
-      run_request "GET" "/this-path-does-not-exist" # This endpoint should return a 404 Not Found status.
-
+      run_request "GET" "/this-path-does-not-exist"
       ;;
     invalid-method)
-      run_request "PATCH" "/healthcheck" # This endpoint should return a 405 Method Not Allowed status.
+      run_request "PATCH" "/healthcheck"
       ;;
-    # Run through a sequence of tests to demonstrate the API functionality. It will use the default test values.
     all)
       payload="$(build_add_payload "$TEST_FQDN" "$TEST_DNS_PROVIDER" "$TEST_EMAIL")"
       run_request "GET" "/healthcheck"
@@ -353,12 +390,6 @@ main() {
 
 #----------------------------------------------------------------------------
 # Load environment configuration and validate prerequisites
-# This section will load the .env file, set up variables, and perform
-# validation checks to ensure that all required configuration is present and
-# valid before running any tests.
-# This includes checking for required environment variables, verifying that
-# necessary files (like certificates) exist, and validating the format of
-# critical values like FQDNs and email addresses.
 #----------------------------------------------------------------------------
 load_env_config "$ENV_FILE"
 
@@ -370,6 +401,7 @@ BASE_URL="https://${REPO_FQDN}:${API_PORT}"
 CA_CERT="${API_MTLS_CA_FILE}"
 CLIENT_CERT="$(dirname "$CA_CERT")/${API_MTLS_CLIENT_NAME_EFFECTIVE}.crt"
 CLIENT_KEY="$(dirname "$CA_CERT")/${API_MTLS_CLIENT_NAME_EFFECTIVE}.key"
+SERVER_CA_CERT="${API_SERVER_CA_FILE:-}"
 CURL_BIN="${CURL_BIN:-/usr/bin/curl}"
 
 TEST_FQDN="${FQDN_CSV_ENTRY:-test.example.com}"
@@ -387,10 +419,14 @@ for var in "${required_vars[@]}"; do
   require_non_empty_var "$var"
 done
 
-require_file "$CA_CERT" "CA certificate"
+require_file "$CA_CERT" "API mTLS CA certificate"
 require_file "$CLIENT_CERT" "Client certificate"
 require_file "$CLIENT_KEY" "Client private key"
 require_file "$CURL_BIN" "curl binary"
+
+if [[ -n "$SERVER_CA_CERT" ]]; then
+  require_file "$SERVER_CA_CERT" "Server CA bundle"
+fi
 
 is_valid_fqdn "$REPO_FQDN" || { error "Invalid REPO_FQDN in environment: $REPO_FQDN"; exit 1; }
 is_valid_fqdn "$TEST_FQDN" || { error "Invalid default test FQDN for 'all': $TEST_FQDN"; exit 1; }
@@ -410,9 +446,14 @@ printf "🌐 Repo FQDN:      %s\n" "$REPO_FQDN"
 printf "🔌 API port:       %s\n" "$API_PORT"
 printf "🔗 Base URL:       %s\n" "$BASE_URL"
 printf "👤 API client CN:  %s\n" "$API_MTLS_CLIENT_NAME_EFFECTIVE"
-printf "📄 CA file:        %s\n" "$CA_CERT"
+printf "📄 API mTLS CA:    %s\n" "$CA_CERT"
 printf "📄 Client cert:    %s\n" "$CLIENT_CERT"
 printf "🔑 Client key:     %s\n" "$CLIENT_KEY"
+if [[ -n "$SERVER_CA_CERT" ]]; then
+  printf "🌐 Server CA:      %s\n" "$SERVER_CA_CERT"
+else
+  printf "🌐 Server CA:      system trust store\n"
+fi
 printf "🧪 Test FQDN:      %s\n" "$TEST_FQDN"
 printf "🧪 Test DNS:       %s\n" "$TEST_DNS_PROVIDER"
 printf "🧪 Test email:     %s\n" "$TEST_EMAIL"
