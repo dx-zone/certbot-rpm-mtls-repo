@@ -103,12 +103,12 @@ log "Validating required settings"
 required_vars=(
   REPO_FQDN
   CLIENT_NAME
-  API_MTLS_CLIENTS_FILE
-  API_MTLS_IPS_FILE
+  API_MTLS_ALLOWED_CNS_LIST
+  API_MTLS_CLIENTS_IP_LIST
   API_MTLS_CA_FILE
   API_TLS_CERT_FILE
   API_TLS_KEY_FILE
-  API_CERT_CSV
+  API_CERT_CSV_FILE
   API_CERT_MANAGER
 )
 
@@ -123,19 +123,19 @@ success "All required environment variables are present"
 # ------------------------------------------------------------------------------
 log "Preparing mTLS allowlist files"
 
-ensure_parent_dir "$API_MTLS_CLIENTS_FILE"
-ensure_parent_dir "$API_MTLS_IPS_FILE"
+ensure_parent_dir "$API_MTLS_ALLOWED_CNS_LIST"
+ensure_parent_dir "$API_MTLS_CLIENTS_IP_LIST"
 
-touch "$API_MTLS_CLIENTS_FILE"
-touch "$API_MTLS_IPS_FILE"
+touch "$API_MTLS_ALLOWED_CNS_LIST"
+touch "$API_MTLS_CLIENTS_IP_LIST"
 
 success "Allowlist files are ready"
 
 # Keep the client CN list persistent and avoid duplicates
-add_line_if_missing "$CLIENT_NAME" "$API_MTLS_CLIENTS_FILE"
+add_line_if_missing "$CLIENT_NAME" "$API_MTLS_ALLOWED_CNS_LIST"
 
-if [[ ! -s "$API_MTLS_IPS_FILE" ]]; then
-  warn "IP restriction file exists but is currently empty: $API_MTLS_IPS_FILE"
+if [[ ! -s "$API_MTLS_CLIENTS_IP_LIST" ]]; then
+  warn "IP restriction file exists but is currently empty: $API_MTLS_CLIENTS_IP_LIST"
   info "mTLS CN validation will still apply"
 fi
 
@@ -149,8 +149,8 @@ require_file "$API_TLS_CERT_FILE" "API TLS certificate"
 require_file "$API_TLS_KEY_FILE" "API TLS private key"
 require_file "./api/cert-manager-api" "API binary"
 
-if [[ ! -f "$API_CERT_CSV" ]]; then
-  warn "Certificate CSV not found yet: $API_CERT_CSV"
+if [[ ! -f "$API_CERT_CSV_FILE" ]]; then
+  warn "Certificate CSV not found yet: $API_CERT_CSV_FILE"
   info "The API may still start if it can create or tolerate this file later"
 else
   success "Certificate CSV found"
@@ -164,12 +164,12 @@ success "Critical runtime files look good"
 log "API startup summary"
 printf "🌐 Repo FQDN:           %s\n" "$REPO_FQDN"
 printf "👤 Allowed client CN:   %s\n" "$CLIENT_NAME"
-printf "📄 CN allowlist file:   %s\n" "$API_MTLS_CLIENTS_FILE"
-printf "🌍 IP rules file:       %s\n" "$API_MTLS_IPS_FILE"
+printf "📄 CN allowlist file:   %s\n" "$API_MTLS_ALLOWED_CNS_LIST"
+printf "🌍 IP rules file:       %s\n" "$API_MTLS_CLIENTS_IP_LIST"
 printf "🛡️  mTLS CA file:        %s\n" "$API_MTLS_CA_FILE"
 printf "🔐 TLS cert file:       %s\n" "$API_TLS_CERT_FILE"
 printf "🔑 TLS key file:        %s\n" "$API_TLS_KEY_FILE"
-printf "📊 Cert CSV:            %s\n" "$API_CERT_CSV"
+printf "📊 Cert CSV:            %s\n" "$API_CERT_CSV_FILE"
 printf "🛠️  Cert manager:        %s\n" "$API_CERT_MANAGER"
 
 divider
@@ -186,7 +186,7 @@ exec ./api/cert-manager-api \
   -tls-cert "$API_TLS_CERT_FILE" \
   -tls-key "$API_TLS_KEY_FILE" \
   -mtls-client-ca "$API_MTLS_CA_FILE" \
-  -mtls-allowed-cns "$API_MTLS_CLIENTS_FILE" \
-  -ip-list "$API_MTLS_IPS_FILE" \
-  -cert-csv "$API_CERT_CSV" \
+  -mtls-allowed-cns "$API_MTLS_ALLOWED_CNS_LIST" \
+  -ip-list "$API_MTLS_CLIENTS_IP_LIST" \
+  -cert-csv "$API_CERT_CSV_FILE" \
   -cert-manager "$API_CERT_MANAGER"

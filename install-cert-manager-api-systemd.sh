@@ -294,8 +294,8 @@ main() {
   require_env API_TLS_CERT_FILE
   require_env API_TLS_KEY_FILE
   require_env API_MTLS_CA_FILE
-  require_env API_MTLS_ALLOWED_CNS_FILE
-  require_env API_MTLS_IPS_FILE
+  require_env API_MTLS_ALLOWED_CNS_LIST
+  require_env API_MTLS_CLIENTS_IP_LIST
   require_env API_IP_POLICY
 
   case "${API_IP_POLICY}" in
@@ -318,8 +318,8 @@ main() {
   tls_cert="$(resolve_path "${API_TLS_CERT_FILE}")"
   tls_key="$(resolve_path "${API_TLS_KEY_FILE}")"
   mtls_ca="$(resolve_path "${API_MTLS_CA_FILE}")"
-  allowed_cns="$(resolve_path "${API_MTLS_ALLOWED_CNS_FILE}")"
-  ip_list="$(resolve_path "${API_MTLS_IPS_FILE}")"
+  allowed_cns="$(resolve_path "${API_MTLS_ALLOWED_CNS_LIST}")"
+  ip_list="$(resolve_path "${API_MTLS_CLIENTS_IP_LIST}")"
   cert_csv="$(resolve_path "${API_CERT_CSV_FILE}")"
 
   log "Resolved configuration:"

@@ -257,7 +257,7 @@ fi
 # ------------------------------------------------------------------------------
 # Resolve effective configuration
 # ------------------------------------------------------------------------------
-REPO_FQDN="${REPO_FQDN:-${REPO_FQDN:-$DEFAULT_REPO_FQDN}}"
+REPO_FQDN="${REPO_FQDN:-$DEFAULT_REPO_FQDN}"
 
 # Prefer API-specific names first, then RPMREPO-scoped, then legacy shared vars
 API_MTLS_CA_NAME_EFFECTIVE="${API_MTLS_CA_NAME_EFFECTIVE:-${API_MTLS_CA_NAME:-${RPMREPO_MTLS_CA_NAME:-${CA_NAME:-$DEFAULT_API_MTLS_CA_NAME}}}}"
@@ -273,22 +273,22 @@ if [[ -z "${API_MTLS_CLIENT_NAME_EFFECTIVE}" ]]; then
   API_MTLS_CLIENT_NAME_EFFECTIVE="$DEFAULT_API_MTLS_CLIENT_NAME"
 fi
 
-API_PORT="${API_PORT:-${API_PORT:-$DEFAULT_API_PORT}}"
+API_PORT="${API_PORT:-$DEFAULT_API_PORT}"
 LISTEN_ADDR="${LISTEN_ADDR:-:${API_PORT}}"
-IP_POLICY="${IP_POLICY:-$DEFAULT_IP_POLICY}"
+IP_POLICY="${IP_POLICY:-${API_IP_POLICY:-$DEFAULT_IP_POLICY}}"
 CERT_MANAGER="${CERT_MANAGER:-${API_CERT_MANAGER:-$DEFAULT_CERT_MANAGER}}"
 API_BIN="${API_BIN:-$DEFAULT_API_BIN}"
 
 WORK_BASE="${WORK_BASE:-$DEFAULT_WORK_BASE}"
 PKI_DIR="${PKI_DIR:-${WORK_BASE}/pki_mtls_material}"
 
-# New names first, then old names for backward compatibility
-CLIENTS_FILE="${CLIENTS_FILE:-${API_MTLS_ALLOWED_CNS_FILE:-${API_MTLS_CN_CLIENTS_FILE:-$DEFAULT_CLIENTS_FILE}}}"
-IPS_FILE="${IPS_FILE:-${API_MTLS_IPS_FILE:-$DEFAULT_IPS_FILE}}"
+# Current canonical variable names from .env
+CLIENTS_FILE="${CLIENTS_FILE:-${API_MTLS_ALLOWED_CNS_LIST:-$DEFAULT_CLIENTS_FILE}}"
+IPS_FILE="${IPS_FILE:-${API_MTLS_CLIENTS_IP_LIST:-$DEFAULT_IPS_FILE}}"
 CA_CERT_PATH="${CA_CERT_PATH:-${API_MTLS_CA_FILE:-$DEFAULT_CA_FILE}}"
 TLS_CERT_PATH="${TLS_CERT_PATH:-${API_TLS_CERT_FILE:-./datastore/certbot-data/letsencrypt/live/${REPO_FQDN}/fullchain.pem}}"
 TLS_KEY_PATH="${TLS_KEY_PATH:-${API_TLS_KEY_FILE:-./datastore/certbot-data/letsencrypt/live/${REPO_FQDN}/privkey.pem}}"
-CERT_CSV="${CERT_CSV:-${API_CERT_CSV_FILE:-${API_CERT_CSV:-$DEFAULT_CERT_CSV}}}"
+CERT_CSV="${CERT_CSV:-${API_CERT_CSV_FILE:-$DEFAULT_CERT_CSV}}"
 
 [[ -n "$REPO_FQDN" ]] || die "REPO_FQDN is required"
 [[ "$IP_POLICY" =~ ^(allow|deny)$ ]] || die "ip-policy must be allow or deny"
