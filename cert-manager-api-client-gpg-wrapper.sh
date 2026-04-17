@@ -48,6 +48,8 @@
 #   - Client command and options must come after `--`
 #   - The wrapper exports API_MTLS_CA_FILE and API_MTLS_CLIENT_NAME so the
 #     client script resolves cert/key paths from the temp workdir
+#   - The client script must preserve pre-exported runtime overrides over .env
+#     defaults
 ################################################################################
 
 set -Eeuo pipefail
@@ -176,6 +178,16 @@ require_dir() {
   [[ -d "$path" ]] || die "Required directory not found: $path"
 }
 
+resolve_path() {
+  local path="$1"
+
+  if [[ "$path" = /* ]]; then
+    printf '%s\n' "$path"
+  else
+    printf '%s\n' "${SCRIPT_DIR}/${path#./}"
+  fi
+}
+
 run_cmd() {
   if [[ "$DRY_RUN" == "true" ]]; then
     printf '🧪 DRY-RUN:'
@@ -209,6 +221,7 @@ print_summary() {
 🔐 GPG Wrapper Configuration
 ────────────────────────────────────────────────────────────
 Script              : $SCRIPT_NAME
+Script dir          : $SCRIPT_DIR
 GPG homedir         : $GPG_HOMEDIR
 Recipient           : $GPG_RECIPIENT
 Passphrase file     : ${GPG_PASSPHRASE_FILE:-"(not set; using normal GPG behavior)"}
@@ -431,7 +444,7 @@ done
 [[ ${#CLIENT_ARGS[@]} -gt 0 ]] || die "No client command/args supplied. Use -- <client-command> [options]"
 
 ###############################################################################
-# Derived filenames
+# Derived filenames and path normalization
 ###############################################################################
 if [[ -z "$CRT_FILENAME" ]]; then
   CRT_FILENAME="${CLIENT_NAME}.crt"
@@ -440,6 +453,9 @@ fi
 if [[ -z "$KEY_FILENAME" ]]; then
   KEY_FILENAME="${CLIENT_NAME}.key"
 fi
+
+SRC_DIR="$(resolve_path "$SRC_DIR")"
+CLIENT_SCRIPT="$(resolve_path "$CLIENT_SCRIPT")"
 
 ###############################################################################
 # Validation
@@ -484,6 +500,10 @@ decrypt_one "${SRC_DIR}/${CA_FILENAME}.asc"  "${WORKDIR}/${CA_FILENAME}"
 decrypt_one "${SRC_DIR}/${CRT_FILENAME}.asc" "${WORKDIR}/${CRT_FILENAME}"
 decrypt_one "${SRC_DIR}/${KEY_FILENAME}.asc" "${WORKDIR}/${KEY_FILENAME}"
 
+require_file "${WORKDIR}/${CA_FILENAME}"
+require_file "${WORKDIR}/${CRT_FILENAME}"
+require_file "${WORKDIR}/${KEY_FILENAME}"
+
 DECRYPTION_DONE=true
 ok "Decryption complete."
 
@@ -503,6 +523,7 @@ printf '   API_MTLS_CLIENT_NAME=%q\n' "$API_MTLS_CLIENT_NAME"
 # Execute client script with forwarded args
 ###############################################################################
 info "Executing client script: $CLIENT_SCRIPT ${CLIENT_ARGS[*]}"
+info "Wrapper expects client script to preserve exported runtime overrides over .env defaults."
 
 if [[ "$DRY_RUN" == "true" ]]; then
   printf '🧪 DRY-RUN:'

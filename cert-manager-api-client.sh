@@ -7,7 +7,8 @@
 #   cert-manager API.
 #
 # What this script does:
-#   - Loads endpoint and client identity settings from .env
+#   - Loads endpoint and client identity settings from .env as defaults only
+#   - Preserves pre-exported runtime overrides from a wrapper or caller
 #   - Uses a client certificate and private key for mTLS authentication
 #   - Uses the system trust store by default for server TLS validation
 #   - Optionally uses a dedicated server CA bundle when API_SERVER_CA_FILE is set
@@ -17,8 +18,8 @@
 #   - API_SERVER_CA_FILE, when set, is used to verify the API server certificate
 #   - If API_SERVER_CA_FILE is unset, curl uses the operating system CA trust
 #
-# Priority order:
-#   1. CLI arguments
+# Precedence model:
+#   1. Already-exported environment variables (for example from GPG wrapper)
 #   2. .env values
 #   3. Built-in defaults
 #
@@ -34,6 +35,9 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${SCRIPT_DIR}/.env"
 
+###############################################################################
+# Output helpers
+###############################################################################
 log() {
   printf "\n🔹 %s\n" "$1"
 }
@@ -54,6 +58,9 @@ divider() {
   printf '%s\n' "------------------------------------------------------------"
 }
 
+###############################################################################
+# Usage
+###############################################################################
 usage() {
   cat <<'USAGE_EOF'
 Usage: ./cert-manager-api-client.sh {health|list|add|delete|reload|invalid-path|invalid-method|all} [options]
@@ -92,6 +99,9 @@ Examples:
 USAGE_EOF
 }
 
+###############################################################################
+# Validation helpers
+###############################################################################
 require_file() {
   local file="$1"
   local label="$2"
@@ -110,10 +120,49 @@ require_non_empty_var() {
   fi
 }
 
-load_env_config() {
+is_valid_fqdn() {
+  local fqdn="$1"
+
+  [[ -n "$fqdn" ]] || return 1
+  [[ ${#fqdn} -le 253 ]] || return 1
+  [[ "$fqdn" != *" "* ]] || return 1
+  [[ "$fqdn" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]]
+}
+
+is_valid_email() {
+  local email="$1"
+
+  [[ -n "$email" ]] || return 1
+  [[ "$email" != *" "* ]] || return 1
+  [[ "$email" =~ ^[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}$ ]]
+}
+
+is_valid_dns_provider() {
+  local provider="$1"
+
+  [[ -n "$provider" ]] || return 1
+  [[ "$provider" =~ ^[A-Za-z0-9._-]+$ ]]
+}
+
+###############################################################################
+# .env loading
+###############################################################################
+strip_wrapping_quotes() {
+  local value="$1"
+
+  if [[ "$value" =~ ^\".*\"$ ]]; then
+    value="${value:1:${#value}-2}"
+  elif [[ "$value" =~ ^\'.*\'$ ]]; then
+    value="${value:1:${#value}-2}"
+  fi
+
+  printf '%s' "$value"
+}
+
+load_env_defaults() {
   local env_file="$1"
 
-  log "Loading environment from $env_file"
+  log "Loading environment defaults from $env_file"
 
   if [[ ! -f "$env_file" ]]; then
     error "Missing required configuration file: $env_file"
@@ -144,59 +193,38 @@ load_env_config() {
     fi
 
     printf "⚠️  Note:\n"
-    printf "   This script depends on .env for API endpoint and mTLS configuration.\n"
-    printf "   Without it, requests cannot be executed.\n\n"
+    printf "   This script depends on .env for API endpoint defaults and local fallback configuration.\n"
+    printf "   Wrapper/runtime exported variables take precedence when present.\n\n"
 
     exit 1
   fi
 
-  set -a
-  # shellcheck disable=SC1091
-  source "$env_file"
-  set +a
+  while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+    [[ -z "$raw_line" ]] && continue
+    [[ "$raw_line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$raw_line" != *=* ]] && continue
 
-  success "Loaded configuration from $env_file"
+    local key="${raw_line%%=*}"
+    local value="${raw_line#*=}"
+
+    key="$(printf '%s' "$key" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    value="$(printf '%s' "$value" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    value="$(strip_wrapping_quotes "$value")"
+
+    [[ -n "$key" ]] || continue
+
+    # Preserve values already exported by wrapper/caller.
+    if [[ -z "${!key+x}" ]]; then
+      export "$key=$value"
+    fi
+  done < "$env_file"
+
+  success "Loaded configuration defaults from $env_file"
 }
 
-pretty_print_body() {
-  local body="$1"
-
-  if [[ -z "$body" ]]; then
-    warn "No response body returned"
-    return
-  fi
-
-  if command -v jq >/dev/null 2>&1; then
-    printf '%s\n' "$body" | jq . 2>/dev/null || printf '%s\n' "$body"
-  else
-    printf '%s\n' "$body"
-  fi
-}
-
-is_valid_fqdn() {
-  local fqdn="$1"
-
-  [[ -n "$fqdn" ]] || return 1
-  [[ ${#fqdn} -le 253 ]] || return 1
-  [[ "$fqdn" != *" "* ]] || return 1
-  [[ "$fqdn" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]]
-}
-
-is_valid_email() {
-  local email="$1"
-
-  [[ -n "$email" ]] || return 1
-  [[ "$email" != *" "* ]] || return 1
-  [[ "$email" =~ ^[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}$ ]]
-}
-
-is_valid_dns_provider() {
-  local provider="$1"
-
-  [[ -n "$provider" ]] || return 1
-  [[ "$provider" =~ ^[A-Za-z0-9._-]+$ ]]
-}
-
+###############################################################################
+# JSON helpers
+###############################################################################
 json_escape() {
   local s="${1:-}"
   s=${s//\\/\\\\}
@@ -217,69 +245,24 @@ build_add_payload() {
     "$fqdn_escaped" "$dns_escaped" "$email_escaped"
 }
 
-run_request() {
-  local method="$1"
-  local endpoint="$2"
-  local data="${3:-}"
+pretty_print_body() {
+  local body="$1"
 
-  log "Testing ${method} ${endpoint}"
-  printf "🌐 URL: %s%s\n" "$BASE_URL" "$endpoint"
-  printf "🛡️  API mTLS client: %s\n" "$API_MTLS_CLIENT_NAME_EFFECTIVE"
-  printf "📄 API mTLS CA file: %s\n" "$CA_CERT"
-  printf "📄 Client cert: %s\n" "$CLIENT_CERT"
-  printf "🔑 Client key: %s\n" "$CLIENT_KEY"
-  if [[ -n "$SERVER_CA_CERT" ]]; then
-    printf "🌐 Server CA bundle: %s\n" "$SERVER_CA_CERT"
+  if [[ -z "$body" ]]; then
+    warn "No response body returned"
+    return
+  fi
+
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s\n' "$body" | jq . 2>/dev/null || printf '%s\n' "$body"
   else
-    printf "🌐 Server CA bundle: system trust store\n"
+    printf '%s\n' "$body"
   fi
-
-  if [[ -n "$data" ]]; then
-    printf "📦 Payload: %s\n" "$data"
-  fi
-
-  divider
-
-  local -a curl_args
-  curl_args=(
-    --silent
-    --show-error
-    --include
-    --request "$method"
-    --cert "$CLIENT_CERT"
-    --key "$CLIENT_KEY"
-    --header "Content-Type: application/json"
-  )
-
-  if [[ -n "$SERVER_CA_CERT" ]]; then
-    curl_args+=( --cacert "$SERVER_CA_CERT" )
-  fi
-
-  if [[ -n "$data" ]]; then
-    curl_args+=( --data "$data" )
-  fi
-
-  local response
-  response="$(
-    "$CURL_BIN" "${curl_args[@]}" "${BASE_URL}${endpoint}"
-  )"
-
-  local headers body status_line
-  headers="$(printf '%s' "$response" | sed -n '1,/^\r$/p')"
-  body="$(printf '%s' "$response" | sed '1,/^\r$/d')"
-  status_line="$(printf '%s\n' "$headers" | head -n 1)"
-
-  printf "📨 Status: %s\n" "$status_line"
-  printf "\n📋 Response headers\n"
-  printf '%s\n' "$headers"
-
-  printf "\n📄 Response body\n"
-  pretty_print_body "$body"
-
-  printf "\n"
-  divider
 }
 
+###############################################################################
+# Argument parsing
+###############################################################################
 validate_add_args() {
   [[ -n "$FQDN" ]] || { error "--fqdn is required for 'add'"; exit 1; }
   [[ -n "$DNS_PROVIDER" ]] || { error "--dns or --dns-provider is required for 'add'"; exit 1; }
@@ -349,6 +332,72 @@ parse_args() {
   esac
 }
 
+###############################################################################
+# Request execution
+###############################################################################
+run_request() {
+  local method="$1"
+  local endpoint="$2"
+  local data="${3:-}"
+
+  log "Testing ${method} ${endpoint}"
+  printf "🌐 URL: %s%s\n" "$BASE_URL" "$endpoint"
+  printf "🛡️  API mTLS client: %s\n" "$API_MTLS_CLIENT_NAME_EFFECTIVE"
+  printf "📄 API mTLS CA file: %s\n" "$CA_CERT"
+  printf "📄 Client cert: %s\n" "$CLIENT_CERT"
+  printf "🔑 Client key: %s\n" "$CLIENT_KEY"
+  if [[ -n "$SERVER_CA_CERT" ]]; then
+    printf "🌐 Server CA bundle: %s\n" "$SERVER_CA_CERT"
+  else
+    printf "🌐 Server CA bundle: system trust store\n"
+  fi
+
+  if [[ -n "$data" ]]; then
+    printf "📦 Payload: %s\n" "$data"
+  fi
+
+  divider
+
+  local -a curl_args
+  curl_args=(
+    --silent
+    --show-error
+    --include
+    --request "$method"
+    --cert "$CLIENT_CERT"
+    --key "$CLIENT_KEY"
+    --header "Content-Type: application/json"
+  )
+
+  if [[ -n "$SERVER_CA_CERT" ]]; then
+    curl_args+=( --cacert "$SERVER_CA_CERT" )
+  fi
+
+  if [[ -n "$data" ]]; then
+    curl_args+=( --data "$data" )
+  fi
+
+  local response
+  response="$(
+    "$CURL_BIN" "${curl_args[@]}" "${BASE_URL}${endpoint}"
+  )"
+
+  local headers body status_line
+  headers="$(printf '%s' "$response" | sed -n '1,/^\r$/p')"
+  body="$(printf '%s' "$response" | sed '1,/^\r$/d')"
+  status_line="$(printf '%s\n' "$headers" | head -n 1)"
+
+  printf "📨 Status: %s\n" "$status_line"
+  printf "\n📋 Response headers\n"
+  printf '%s\n' "$headers"
+
+  printf "\n📄 Response body\n"
+  pretty_print_body "$body"
+
+  printf "\n"
+  divider
+}
+
 main() {
   local payload
 
@@ -388,21 +437,27 @@ main() {
   esac
 }
 
-#----------------------------------------------------------------------------
-# Load environment configuration and validate prerequisites
-#----------------------------------------------------------------------------
-load_env_config "$ENV_FILE"
+###############################################################################
+# Bootstrap
+###############################################################################
+load_env_defaults "$ENV_FILE"
+
+# Built-in defaults layered after wrapper/caller env and .env defaults
+API_PORT="${API_PORT:-8000}"
+CURL_BIN="${CURL_BIN:-/usr/bin/curl}"
+API_MTLS_CLIENT_NAME="${API_MTLS_CLIENT_NAME:-}"
+API_SERVER_CA_FILE="${API_SERVER_CA_FILE:-}"
 
 API_MTLS_CLIENT_NAME_EFFECTIVE="${API_MTLS_CLIENT_NAME:-${RPMREPO_MTLS_CLIENT_NAME:-${CLIENT_NAME:-cert-manager-automation-client}}}"
 
-API_PORT="${API_PORT:-8000}"
-BASE_URL="https://${REPO_FQDN}:${API_PORT}"
+require_non_empty_var "REPO_FQDN"
+require_non_empty_var "API_MTLS_CA_FILE"
 
 CA_CERT="${API_MTLS_CA_FILE}"
 CLIENT_CERT="$(dirname "$CA_CERT")/${API_MTLS_CLIENT_NAME_EFFECTIVE}.crt"
 CLIENT_KEY="$(dirname "$CA_CERT")/${API_MTLS_CLIENT_NAME_EFFECTIVE}.key"
 SERVER_CA_CERT="${API_SERVER_CA_FILE:-}"
-CURL_BIN="${CURL_BIN:-/usr/bin/curl}"
+BASE_URL="https://${REPO_FQDN}:${API_PORT}"
 
 TEST_FQDN="${FQDN_CSV_ENTRY:-test.example.com}"
 TEST_DNS_PROVIDER="${DNS_PROVIDER:-cloudflare}"
