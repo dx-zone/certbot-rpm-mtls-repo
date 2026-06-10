@@ -29,10 +29,7 @@ services:
 
       # SHARED STORAGE: Access to the RPM directory where certbot will pack into RPM post-issuance certificates.
       - ./datastore/rpmrepo-data/rpms:/rpms:rw,Z
-
-      # OVERRIDE: Overrides the baked-in CSV with your local domain list
-      - ./certbot/files/certificates.csv:/etc/letsencrypt/certificates.csv:rw,Z
-
+  
     # The Python manager runs as PID 1 to maintain the service lifecycle.
     # restart policy ensures the service recovers from crashes or host reboots.
     restart: unless-stopped

@@ -67,22 +67,27 @@ RUN mkdir -p /etc/letsencrypt/secrets \
              /var/log/letsencrypt \
              /var/lib/letsencrypt \
              /usr/local/bin/certbot-scripts \
+             /usr/local/share/certbot-defaults \
              /rpms && \
     chmod 755 /rpms
 
-# 5. VOLUMES: Ensures that certificates and generated RPMs survive container
-# deletion by triggering the creation of persistent volumes (Anonymous or Named).
-# We include /rpms so the finished packages are never lost.
+# 5. VOLUMES: Documents runtime persistence paths.
+# In docker compose, these paths are provided by explicit bind mounts.
 VOLUME ["/etc/letsencrypt", "/rpms"]
 
 # 6. FILES:
-# Copy all scripts and config in one layer to minimize metadata.
-# Ensure 'files/' contains: certificates.csv, certbot_manager.py, cert2rpm.sh
-COPY files/certificates.csv /etc/letsencrypt/certificates.csv
-COPY files/certbot_manager.py files/cert2rpm.sh files/README /usr/local/bin/certbot-scripts/
+# Copy the default CSV outside /etc/letsencrypt so it is NOT hidden by the
+# /etc/letsencrypt bind mount at runtime.
+COPY files/certificates.csv /usr/local/share/certbot-defaults/certificates.csv
 
-# 7. PERMISSIONS: Ensure certbot_manager.py & cert2rpm.sh are executable
-RUN chmod +x /usr/local/bin/certbot-scripts/certbot_manager.py /usr/local/bin/certbot-scripts/cert2rpm.sh
+# Copy runtime scripts.
+COPY files/certbot_manager.py files/cert2rpm.sh files/README files/entrypoint.sh /usr/local/bin/certbot-scripts/
+
+# 7. PERMISSIONS: Ensure runtime scripts are executable.
+RUN chmod +x \
+    /usr/local/bin/certbot-scripts/certbot_manager.py \
+    /usr/local/bin/certbot-scripts/cert2rpm.sh \
+    /usr/local/bin/certbot-scripts/entrypoint.sh
 
 # 8. RUNTIME: Set environment and user context
 ENV PYTHONUNBUFFERED=1
@@ -91,7 +96,9 @@ ENV PYTHONUNBUFFERED=1
 USER root
 
 # 9. ENTRYPOINT
-ENTRYPOINT ["/usr/bin/python3", "/usr/local/bin/certbot-scripts/certbot_manager.py"]
+# The wrapper seeds /etc/letsencrypt/certificates.csv only if missing,
+# then hands off to certbot_manager.py.
+ENTRYPOINT ["/usr/local/bin/certbot-scripts/entrypoint.sh"]
 
 # CMD provides the default arguments (overridable)
 CMD ["--csv", "/etc/letsencrypt/certificates.csv", "--frequency", "60", "--hook", "/usr/local/bin/certbot-scripts/cert2rpm.sh"]
