@@ -1,5 +1,8 @@
-fqdn,dns_provider,email
+fqdn,dns_provider,email,key_type,key_param
+hub01.mydatacenter.io,cloudflare,admin@mydatacenter.io,,
+hub02.mydatacenter.io,cloudflare,admin@mydatacenter.io
 repo.example.com,cloudflare,admin@example.com
 app.example.com,cloudflare,admin@example.com
 web.example.com,cloudflare,admin@example.com
 email.example.com,cloudflare,admin@example.com
+evolution.example.com,cloudflare,admin@example.com,rsa,4096
