@@ -2,33 +2,25 @@
 
 ################################################################################
 # 🏗️  ENTERPRISE PKI & RPM REPOSITORY STACK MANAGER
-################################################################################
-# PURPOSE:
-#   Orchestrates the lifecycle of the secure RPM distribution pipeline.
-#   Provides a human-friendly interface for initialization, deployment,
-#   auditing, maintenance, backup, and rebuilding of the stack.
 #
-# REBUILD BEHAVIOR:
+# Rebuild safety:
+#   1. Validate Compose configuration.
+#   2. Build each replacement image SEQUENTIALLY before changing containers.
+#   3. Copy the persistent datastore into a timestamped backup.
+#   4. Recreate affected containers without deleting bind-mounted data.
+#   5. Check startup status and report failures.
 #
-#   Full stack:
-#       ./manage-certbot-repo-client-stack.sh rebuild
-#
-#       1. Stops the Docker Compose stack
-#       2. Backs up ./datastore to:
-#            ./datastore.BAK.YYYYMMDD-HHMMSS
-#       3. Recreates the required datastore structure and permissions
-#       4. Rebuilds and starts the complete stack
-#       5. Displays container status
-#
-#   Single service:
-#       ./manage-certbot-repo-client-stack.sh rebuild certbot
-#
-#       Rebuilds only the specified service.
-#       The datastore is NOT moved or reset.
-#
+# CAUTION: A live file-level backup is not an atomic snapshot. For strict
+# consistency, coordinate application writes or use filesystem snapshots.
+# Backup covers ./datastore only; separately preserve secrets (including mTLS CA).
+# Python 3 is required on the host to enumerate Compose build services.
+# Before running a rebuild, ensure image changes and Python scripts are tested.
+# Use: ./manage-certbot-repo-client-stack.sh rebuild [SERVICE]
+#      ./manage-certbot-repo-client-stack.sh deploy [SERVICE]
 ################################################################################
 
 set -e
+set -o pipefail
 
 
 # ==============================================================================
@@ -110,7 +102,8 @@ usage() {
     printf "  init     🚀 Setup directories, fix permissions, and prepare PKI workspace\n"
     printf "  pki      🔐 Generate/Rotate mTLS client certificates (manual mode)\n"
     printf "  up       ⚡ Start the stack and wait for healthchecks\n"
-    printf "  rebuild  🛠️  Backup datastore and rebuild stack (or rebuild one SERVICE)\n"
+    printf "  rebuild  🛠️  Sequential build, back up, then recreate stack (or one SERVICE)\n"
+    printf "  deploy   🚀 Back up and deploy existing images WITHOUT rebuilding\n"
     printf "  status   📊 Show container health and certificate info\n"
     printf "  check    🔍 Run diagnostic checks (validation sub-commands)\n"
     printf "  logs     📜 Follow all container logs\n"
@@ -123,6 +116,8 @@ usage() {
     printf "  %s up\n" "$0"
     printf "  %s rebuild\n" "$0"
     printf "  %s rebuild certbot\n" "$0"
+    printf "  %s deploy\n" "$0"
+    printf "  %s deploy certbot\n" "$0"
     printf "  %s status\n" "$0"
     printf "  %s check pipeline\n" "$0"
     printf "  %s logs\n" "$0"
@@ -164,7 +159,9 @@ init_stack() {
 
     # Ensure ownership and permissions for shared volumes.
     sudo chown -R 1000:1000 ./datastore ./secrets/rpmrepo-secrets
-    sudo chmod -R 775 ./datastore ./secrets/rpmrepo-secrets
+    # Do not chmod -R 775: private keys and stored TLS credentials need
+    # restrictive permissions. Set directory traverse rights only.
+    sudo find ./datastore ./secrets/rpmrepo-secrets -type d -exec chmod 750 {} +
 
     # Secure DNS .ini files.
     if ls ./secrets/certbot-secrets/ini/*.ini >/dev/null 2>&1; then
@@ -236,34 +233,33 @@ generate_pki() {
 
 backup_datastore() {
     local datastore="./datastore"
-    local timestamp
-    local backup_dir
-
+    local timestamp backup_dir
     timestamp="$(date '+%Y%m%d-%H%M%S')"
     backup_dir="./datastore.BAK.${timestamp}"
 
+    DATASTORE_BACKUP=""
     if [ ! -d "$datastore" ]; then
-        log_warn "No datastore directory found. Nothing to back up."
-        DATASTORE_BACKUP=""
+        log_warn "No datastore directory found; nothing to back up."
         return 0
     fi
 
-    log_info "Backing up persistent datastore..."
-    log_info "  Source:      $datastore"
-    log_info "  Destination: $backup_dir"
-
-    sudo mv "$datastore" "$backup_dir"
-
+    # Never move the live datastore: container bind mounts must remain valid.
+    if [ -e "$backup_dir" ]; then
+        log_error "Backup destination already exists: $backup_dir"
+        return 1
+    fi
+    log_info "Copying persistent datastore to $backup_dir ..."
+    sudo cp -a -- "$datastore" "$backup_dir"
     DATASTORE_BACKUP="$backup_dir"
-
-    log_success "Datastore backup created:"
-    log_success "  $DATASTORE_BACKUP"
+    log_success "Datastore backup created: $DATASTORE_BACKUP"
+    log_warn "This is a live file copy, not an atomic filesystem snapshot."
 }
 
 
 up_stack() {
     log_info "Starting the RPM Repository stack..."
 
+    docker compose config --quiet
     docker compose up -d
 
     log_info "Waiting for services to be healthy..."
@@ -280,10 +276,15 @@ up_stack() {
 
         printf "."
         sleep 2
-        ((count++))
+        count=$((count + 1))
     done
 
     printf "\n"
+    if [ "$count" -ge "$max_retries" ]; then
+        log_error "rpmrepo did not reach running state during the startup check."
+        docker compose ps
+        return 1
+    fi
 
     # Run validation check if available.
     if [ -f "./validate-pki-pipeline.sh" ]; then
@@ -293,98 +294,151 @@ up_stack() {
 }
 
 
-rebuild_stack() {
-    local service_target="${1:-}"
+# Build each Compose service image separately. This avoids concurrent DNF
+# downloads, which have repeatedly timed out in this environment.
+# Services without a build specification are skipped (prebuilt images).
+build_images_sequentially() {
+    local service service_list
+    local -a services=()
 
+    if ! service_list="$(docker compose config --format json | python3 -c '
+import json, sys
+config = json.load(sys.stdin)
+for name, service in config.get("services", {}).items():
+    if service.get("build"):
+        print(name)
+')"; then
+        log_error "Could not determine Compose build services."
+        return 1
+    fi
+
+    if [[ -n "$service_list" ]]; then
+        mapfile -t services <<< "$service_list"
+    fi
+
+    if ((${#services[@]} == 0)); then
+        log_info "No buildable services found; using existing images."
+        return 0
+    fi
+
+    log_info "Building ${#services[@]} images sequentially: ${services[*]}"
+    for service in "${services[@]}"; do
+        log_info "Building $service ..."
+        if ! docker compose --progress plain build "$service"; then
+            log_error "Build failed for $service. Deployment aborted; running containers unchanged."
+            return 1
+        fi
+        log_success "Image built: $service"
+    done
+}
+
+
+# Deploy previously built images only. No image download/build is requested.
+# Full-stack deployment requires a completed datastore backup first.
+deploy_stack() {
+    local service_target="${1:-}"
     DATASTORE_BACKUP=""
 
-    # --------------------------------------------------------------------------
-    # SERVICE-SPECIFIC REBUILD
-    #
-    # Do not move or reset persistent data when rebuilding a single service.
-    # --------------------------------------------------------------------------
+    log_info "Validating Docker Compose configuration..."
+    docker compose config --quiet || return 1
+
+    if [[ -n "$service_target" ]]; then
+        if ! docker compose config --services | grep -Fxq -- "$service_target"; then
+            log_error "Unknown service for deploy: $service_target"
+            docker compose config --services
+            return 1
+        fi
+        log_info "Deploying prebuilt image for service: $service_target"
+        log_warn "Single-service deploy does not create a datastore backup; no persistent paths are intentionally modified."
+        if ! docker compose up -d --no-build --no-deps --force-recreate "$service_target"; then
+            log_error "Service deployment failed; inspect Compose status and logs."
+            docker compose ps || true
+            return 1
+        fi
+    else
+        # Do not deploy without the existing datastore: this is not initialization.
+        if [[ ! -d ./datastore ]]; then
+            log_error "./datastore is missing; refusing deploy to avoid starting with empty certificate state."
+            return 1
+        fi
+        backup_datastore || {
+            log_error "Datastore backup failed; deployment aborted."
+            return 1
+        }
+        log_info "Deploying existing images (no rebuild)..."
+        if ! docker compose up -d --no-build --force-recreate; then
+            log_error "Deployment failed; datastore remains on disk. Rollback may be required."
+            log_info "Backup: ${DATASTORE_BACKUP:-none}"
+            docker compose ps || true
+            return 1
+        fi
+        log_success "Datastore backup: ${DATASTORE_BACKUP}"
+    fi
+
+    printf "\n%b📊 CURRENT STACK STATUS%b\n" "$BOLD" "$NC"
+    docker compose ps || return 1
+    log_success "Deploy command completed using prebuilt images."
+    log_warn "Startup is not proof of health: run 'check pipeline', 'check mtls', and review logs."
+    log_warn "mTLS secrets outside ./datastore are not included in the datastore backup."
+}
+
+
+rebuild_stack() {
+    local service_target="${1:-}"
+    DATASTORE_BACKUP=""
+
+    log_info "Validating Docker Compose configuration..."
+    docker compose config --quiet
 
     if [ -n "$service_target" ]; then
-
-        if ! docker compose config --services | grep -Fxq "$service_target"; then
+        if ! docker compose config --services | grep -Fxq -- "$service_target"; then
             log_error "Unknown service for rebuild: $service_target"
-
-            log_info "Available services:"
             docker compose config --services
-
-            exit 1
+            return 1
         fi
-
-        log_info "Rebuilding service: $service_target"
-
-        docker compose up \
-            -d \
-            --build \
-            --force-recreate \
-            "$service_target"
-
-        log_success "Service rebuilt and restarted: $service_target"
-
-        printf "\n${BOLD}📊 CURRENT STACK STATUS${NC}\n"
+        log_info "Building image for service: $service_target"
+        docker compose --progress plain build "$service_target" || {
+            log_error "Image build failed; running service remains untouched."
+            return 1
+        }
+        log_info "Recreating only service: $service_target"
+        docker compose up -d --no-build --no-deps --force-recreate "$service_target" || {
+            log_error "Service recreation failed; inspect Compose logs."
+            return 1
+        }
         docker compose ps
-
-        return
+        log_success "Service image built and container recreated: $service_target"
+        log_warn "Verify the service is healthy; container recreation alone is not a health check."
+        return 0
     fi
 
-
-    # --------------------------------------------------------------------------
-    # FULL STACK REBUILD
-    #
-    # Workflow:
-    #
-    #   1. Stop stack
-    #   2. Preserve current datastore
-    #   3. Recreate datastore structure
-    #   4. Rebuild images
-    #   5. Start containers
-    #   6. Display resulting stack state
-    #
-    # --------------------------------------------------------------------------
-
-    log_info "Performing a clean rebuild of the complete stack..."
-
-    printf "\n"
-
-    log_info "Stopping the current stack..."
-    docker compose down
-
-    printf "\n"
-
-    backup_datastore
-
-    printf "\n"
-
-    log_info "Recreating datastore structure and permissions..."
-    init_stack
-
-    printf "\n"
-
-    log_info "Building and starting the stack..."
-
-    docker compose up \
-        -d \
-        --build \
-        --force-recreate \
-        --remove-orphans
-
-    printf "\n"
-
-    log_success "Stack rebuilt and restarted."
-
-    if [ -n "$DATASTORE_BACKUP" ]; then
-        printf "\n"
-
-        log_success "Previous datastore preserved at:"
-        log_success "  $DATASTORE_BACKUP"
+    log_info "Building all images sequentially BEFORE modifying the running stack..."
+    if ! build_images_sequentially; then
+        log_error "Build failed. Existing containers and datastore were not changed by this rebuild."
+        return 1
     fi
 
-    printf "\n${BOLD}📊 CURRENT STACK STATUS${NC}\n"
+    backup_datastore || {
+        log_error "Backup failed. Deployment aborted before container recreation."
+        return 1
+    }
+
+    log_info "Starting/recreating stack using prebuilt images (preserving datastore)..."
+    # No 'down' and no --build: named/bind-mounted state is preserved.
+    # Do not remove orphaned containers automatically during this maintenance operation.
+    if ! docker compose up -d --no-build --force-recreate; then
+        log_error "Deployment failed. Datastore is preserved; rollback may be required."
+        log_info "Saved backup: ${DATASTORE_BACKUP:-none}"
+        docker compose ps || true
+        return 1
+    fi
+
+    printf "\n%b📊 CURRENT STACK STATUS%b\n" "$BOLD" "$NC"
     docker compose ps
+    log_success "Rebuild deployment commands completed."
+    log_info "Datastore backup: ${DATASTORE_BACKUP:-none}"
+    log_warn "Container startup does not prove application health; run 'check pipeline' and inspect logs."
+    log_warn "mTLS secrets are outside ./datastore and were NOT included in this backup."
 }
 
 
@@ -481,6 +535,8 @@ clean_stack() {
 # 6. ARGUMENT PARSING & MAIN LOGIC
 # ==============================================================================
 
+cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"
+
 VERBOSE=false
 
 if [[ "${1:-}" == "-v" ]]; then
@@ -512,6 +568,10 @@ case "$TARGET" in
 
     rebuild)
         rebuild_stack "${2:-}"
+        ;;
+
+    deploy)
+        deploy_stack "${2:-}"
         ;;
 
     status)

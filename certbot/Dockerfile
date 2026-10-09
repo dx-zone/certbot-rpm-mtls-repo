@@ -51,6 +51,30 @@ FROM almalinux:latest
 # 2. METADATA
 LABEL org.opencontainers.image.maintainer="DevOps <devops@example.com>"
 
+# 3. REPOSITORY CONFIGURATION
+# Use AlmaLinux's official HTTPS repository endpoint instead of mirrorlists.
+# This avoids slow or unreachable mirrors during Docker builds.
+#
+# Applies to BaseOS, AppStream, Extras, and CRB.
+# Preserve the original repository settings as comments.
+
+RUN set -eu; \
+    for repo in \
+        /etc/yum.repos.d/almalinux-baseos.repo \
+        /etc/yum.repos.d/almalinux-appstream.repo \
+        /etc/yum.repos.d/almalinux-extras.repo \
+        /etc/yum.repos.d/almalinux-crb.repo; do \
+        test -f "$repo" || { echo "Missing repository: $repo"; exit 1; }; \
+        sed -i \
+            -e 's|^[[:space:]]*mirrorlist=|#mirrorlist=|' \
+            -e 's|^[[:space:]]*#[[:space:]]*baseurl=https://repo.almalinux.org/|baseurl=https://repo.almalinux.org/|' \
+            "$repo"; \
+        grep -q '^baseurl=https://repo.almalinux.org/' "$repo" || { \
+            echo "Official repository URL not enabled in $repo"; \
+            exit 1; \
+        }; \
+    done
+
 # 3. INSTALLATION:
 RUN dnf install -y epel-release --setopt=install_weak_deps=False && \
     dnf install -y certbot \
